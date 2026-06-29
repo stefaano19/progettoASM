@@ -93,7 +93,10 @@ def extract_subgraph(
         G_lcc.number_of_nodes(), G_lcc.number_of_edges(),
     )
 
-    if strategy == "bfs_seed":
+    if target_n is None or target_n >= G_lcc.number_of_nodes():
+        logger.info("[Extractor] target_n >= LCC size. Prendo tutto il grafo connesso.")
+        selected_nodes = list(G_lcc.nodes())
+    elif strategy == "bfs_seed":
         selected_nodes = _bfs_sample(G_lcc, target_n, seed, seed_strategy)
     elif strategy == "random_walk":
         selected_nodes = _random_walk_sample(G_lcc, target_n, seed, seed_strategy)
