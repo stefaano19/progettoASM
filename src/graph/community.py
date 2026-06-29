@@ -110,24 +110,19 @@ def detect_communities(
 
 
 def _louvain(G: nx.Graph, cfg: "Config") -> tuple[dict[int, int], float]:
-    """Louvain tramite python-louvain."""
-    try:
-        import community as community_louvain  # python-louvain
-    except ImportError as e:
-        raise ImportError(
-            "Installa python-louvain: pip install python-louvain\n"
-            "Oppure: pip install -r requirements.txt"
-        ) from e
-
+    """Louvain nativo tramite networkx (nessuna dipendenza da python-louvain)."""
     resolution = cfg.community.resolution
     seed = cfg.execution.random_seed
 
-    partition: dict[int, int] = community_louvain.best_partition(
-        G,
-        resolution=resolution,
-        random_state=seed,
-    )
-    q = community_louvain.modularity(partition, G)
+    # louvain_communities restituisce una lista di set (uno per ogni community)
+    communities = nx.community.louvain_communities(G, resolution=resolution, seed=seed)
+    
+    partition: dict[int, int] = {}
+    for comm_id, nodes in enumerate(communities):
+        for node in nodes:
+            partition[node] = comm_id
+            
+    q = nx.community.modularity(G, communities)
     return partition, q
 
 
