@@ -22,7 +22,11 @@ normalizzato in [-0.5, +0.5] attorno alla base.
 
 Regole di transizione:
   S -> I  : se frazione_vicini_I >= effective_threshold  AND proposed_state == "I"
-  S -> R  : se spread_intent == False AND frazione_vicini_I > 0  (resistenza attiva)
+  S -> R  : se spread_intent == False
+            AND frazione_vicini_I >= min_resistance_exposure (esposizione non banale)
+            AND susceptibility < resistance_susceptibility_cutoff (genuinamente poco suscettibile)
+            Altrimenti resta S — "in bilico": esposto ma non ancora schierato,
+            potra' ancora convertirsi in I piu' avanti se la pressione cresce.
   I -> R  : se frazione_vicini_F > resistance_threshold  OR proposed_state == "R"
   I -> I  : altrimenti (rimane infetto)
   R -> I  : se fraction_I >= relapse_threshold AND susceptibility > 0.8  (ricaduta)
@@ -120,17 +124,30 @@ class StateMachine:
         base_threshold_std: float = 0.1,
         resistance_threshold: float = 0.25,
         relapse_threshold: float = 0.6,
+        min_resistance_exposure: float = 0.12,
+        resistance_susceptibility_cutoff: float = 0.5,
     ) -> None:
         self._rng = random.Random(seed)
         self._base_threshold_mean = base_threshold_mean
         self._base_threshold_std = base_threshold_std
         self._resistance_threshold = resistance_threshold
         self._relapse_threshold = relapse_threshold
+        self._min_resistance_exposure = min_resistance_exposure
+        self._resistance_susceptibility_cutoff = resistance_susceptibility_cutoff
         self._node_thresholds: dict[int, float] = {}
 
     @classmethod
     def from_config(cls, cfg: "Config") -> "StateMachine":
-        return cls(seed=cfg.execution.random_seed)
+        # getattr con default: non rompe se questi campi non esistono ancora
+        # nella tua dataclass Config — puoi aggiungerli quando vuoi.
+        sim_cfg = getattr(cfg, "simulation", None)
+        return cls(
+            seed=cfg.execution.random_seed,
+            min_resistance_exposure=getattr(sim_cfg, "min_resistance_exposure", 0.12),
+            resistance_susceptibility_cutoff=getattr(
+                sim_cfg, "resistance_susceptibility_cutoff", 0.5
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Threshold management
@@ -229,10 +246,19 @@ class StateMachine:
             if fraction_I >= theta and proposed == AgentState.I:
                 new_state = AgentState.I
                 reason = f"lt_infection (f_I={fraction_I:.2f} >= theta={theta:.2f})"
-            elif not spread_intent and fraction_I > 0:
+            elif (
+                not spread_intent
+                and fraction_I >= self._min_resistance_exposure
+                and susceptibility < self._resistance_susceptibility_cutoff
+            ):
                 new_state = AgentState.R
-                reason = "active_resistance (no spread_intent, exposed)"
-            # else: rimane S
+                reason = (
+                    f"active_resistance (f_I={fraction_I:.2f} >= "
+                    f"{self._min_resistance_exposure:.2f}, susc={susceptibility:.2f} < "
+                    f"{self._resistance_susceptibility_cutoff:.2f})"
+                )
+            # else: rimane S (esposto ma in bilico — non abbastanza esposizione,
+            # o susceptibility troppo alta per "chiudersi" gia' ora)
 
         elif state == AgentState.I:
             if fraction_F >= self._resistance_threshold or proposed == AgentState.R:
