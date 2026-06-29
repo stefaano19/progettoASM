@@ -66,7 +66,12 @@ def detect_communities(
         with open(output_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         community_map = {int(k): int(v) for k, v in data["community_map"].items()}
-        return community_map, data["n_communities"], data["modularity_q"]
+        
+        # Validazione cache: se la dimensione non combacia con il grafo, scarta la cache
+        if len(community_map) == G.number_of_nodes():
+            return community_map, data["n_communities"], data["modularity_q"]
+        else:
+            logger.warning("[Community] La cache non corrisponde alla dimensione del grafo! Ricalcolo...")
 
     # --- Algoritmo ---
     logger.info("[Community] Community detection con algoritmo='%s'...", algorithm)
