@@ -1,0 +1,125 @@
+# =============================================================================
+# config.yaml — Echo Chamber Co-Evolution Framework
+# Unica fonte di verita' per tutti i parametri di runtime.
+# Modifica SOLO questa sezione per switchare tra locale e Kaggle.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Execution Context
+# ---------------------------------------------------------------------------
+execution:
+  mode: "local"            # "local" | "kaggle"
+  random_seed: 42
+  log_level: "DEBUG"       # "DEBUG" | "INFO" | "WARNING"
+
+# ---------------------------------------------------------------------------
+# Paths  (relativi alla project root; risolti da src/utils/config.py)
+# ---------------------------------------------------------------------------
+paths:
+  data_raw:        "data/raw"
+  data_processed:  "data/processed"
+  results:         "results"
+  figures:         "results/figures"
+  logs:            "results/logs"
+  checkpoints:     "results/checkpoints"
+
+# ---------------------------------------------------------------------------
+# Dataset
+# ---------------------------------------------------------------------------
+dataset:
+  name:           "ogbl-collab"
+  ogb_root:       "data/raw"       # dove ogb scarica i file
+  year_filter:    null             # null = tutti gli anni; int = solo archi fino a quell'anno
+
+# ---------------------------------------------------------------------------
+# Subgraph Extraction
+# ---------------------------------------------------------------------------
+subgraph:
+  strategy:       "bfs_seed"       # "bfs_seed" | "random_walk" | "random_nodes"
+  target_nodes:   1000             # nodi nel sottografo locale (1-5% di ~235k)
+  min_component:  200              # scarta componenti connesse con meno di N nodi
+  seed_strategy:  "high_degree"    # nodo di partenza BFS: "high_degree" | "random"
+  output_file:    "data/processed/subgraph.gpickle"
+
+# ---------------------------------------------------------------------------
+# Graph Metrics  (Fase 0)
+# ---------------------------------------------------------------------------
+metrics:
+  compute_betweenness: false       # costoso su grafi grandi; true solo su sottografo
+  betweenness_sample:  500         # nodi campionati per stima betweenness
+  compute_diameter:    false       # O(n^2) — disabilitato per default
+  pagerank_alpha:      0.85
+  katz_alpha:          0.01
+
+# ---------------------------------------------------------------------------
+# Community Detection  (Fase 0)
+# ---------------------------------------------------------------------------
+community:
+  algorithm:      "louvain"        # "louvain" | "label_propagation"
+  resolution:     1.0              # parametro Louvain (>1 community piu' piccole)
+  output_file:    "data/processed/community_map.json"
+
+# ---------------------------------------------------------------------------
+# Agent / Simulation  (Fase 1-2)
+# ---------------------------------------------------------------------------
+simulation:
+  max_steps:             20
+  topic:                 "echo_chamber_polarization"
+  topic_description: >
+    The spread of polarizing narratives within academic collaboration networks,
+    where researchers selectively engage only with like-minded peers, forming
+    self-reinforcing information bubbles that reduce cross-community knowledge.
+  initial_infection_rate: 0.05    # % nodi inizialmente in stato I (pazienti zero)
+  memory_window:          5        # sliding window: ultimi N post dei vicini
+  rewiring_cooldown:      3        # step di cooldown tra rewiring consecutivi
+  checkpoint_every:       5        # salva checkpoint ogni N step
+  seeder_strategy:        "combined" # strategia selezione pazienti zero
+
+# ---------------------------------------------------------------------------
+# LLM Backend  (Fase 1-2)
+# ---------------------------------------------------------------------------
+llm:
+  backend: "api"           # "api" | "local"
+
+  api:
+    provider:      "gemini"
+    model:         "gemini-2.0-flash"
+    temperature:   0.7
+    max_tokens:    512
+    api_key_env:   "GEMINI_API_KEY"
+
+  local:
+    base_url:      "http://localhost:11434/v1"
+    model:         "llama3"
+    temperature:   0.7
+    max_tokens:    512
+
+  token_budget:
+    warn_at:       50000
+    hard_limit:    200000
+
+# ---------------------------------------------------------------------------
+# GNN  (Fase 2)
+# ---------------------------------------------------------------------------
+gnn:
+  model:              "graphsage"    # "graphsage" | "gcn"
+  hidden_dim:         128
+  num_layers:         2
+  dropout:            0.3
+  lr:                 0.001
+  epochs_per_step:    5              # fine-tuning step ad ogni tick temporale
+  embedding_dim:      128
+  rewire_threshold_add:    0.8       # score > soglia -> aggiungi arco
+  rewire_threshold_remove: 0.2       # score < soglia -> rimuovi arco
+  max_new_edges_per_step:  10
+  embedding_file:     "data/processed/embeddings.npy"
+  use_torch:          false          # true = PyTorch (Kaggle/GPU), false = NumPy (locale)
+
+# ---------------------------------------------------------------------------
+# Influence Maximization / CELF  (Fase 3)
+# ---------------------------------------------------------------------------
+influence:
+  budget_k:           10             # numero seed fact-checker da iniettare
+  simulation_rounds:  100            # Monte Carlo per stima spread
+  activation_threshold: 0.4         # soglia infection_rate per attivare CELF
+  celf_interval:      5             # ogni quanti step riesegui CELF

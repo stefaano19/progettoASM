@@ -1,0 +1,60 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# === Virtual Environment ===
+.venv/
+venv/
+env/
+
+# === Dataset (pesante — non committare) ===
+data/raw/
+data/processed/*.npy
+data/processed/*.gpickle
+# Ma mantieni i placeholder:
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# === Checkpoints & Results (grandi artefatti binari) ===
+results/checkpoints/
+results/logs/*.jsonl
+results/figures/*.png
+results/figures/*.pdf
+!results/figures/.gitkeep
+!results/logs/.gitkeep
+
+# === Secrets ===
+.env
+*.env
+secrets.yaml
+
+# === Jupyter ===
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# === Mac ===
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# === IDE ===
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# === Testing ===
+.pytest_cache/
+.coverage
+htmlcov/
+
+# === Logs ===
+*.log
