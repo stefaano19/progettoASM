@@ -347,19 +347,47 @@ class SimulationOrchestrator:
 
     def _agent_cycle(self, step: int) -> int:
         """Esegui il ciclo agenti. Ritorna il numero di transizioni."""
+        import concurrent.futures
+        from src.agents.state_machine import StateMachine
+
         transitions: dict[int, tuple[str, str]] = {}
+        active_nodes = []
+        all_states = self._nm.get_all_states()
 
+        # 1. Filtra i nodi attivi: salta i nodi "S" che non hanno vicini "I" o "F"
         for node_id in self._nm.iter_nodes_shuffled(seed=self._cfg.execution.random_seed + step):
-            try:
-                decision = self._agents[node_id].step(step, self._nm)
-            except RuntimeError:
-                raise
-            except Exception as exc:
-                logger.warning("[Orchestrator] Agent %d error: %s", node_id, exc)
-                continue
+            state = all_states.get(node_id, "S")
+            if state == "S":
+                neighbours = self._nm.neighbours(node_id)
+                nb_counts = StateMachine.get_neighbour_state_counts(
+                    node_id, all_states, neighbours
+                )
+                if nb_counts.get("I", 0) == 0 and nb_counts.get("F", 0) == 0:
+                    continue  # Salta: non transita e l'embedding non cambia
+            active_nodes.append(node_id)
 
-            if decision.state_changed:
-                transitions[node_id] = (decision.old_state, decision.new_state)
+        # 2. Esegui in parallelo per abbattere il collo di bottiglia I/O (chiamate LLM)
+        max_workers = getattr(self._cfg.simulation, "max_workers", 32)
+
+        def run_agent(n_id: int):
+            try:
+                decision = self._agents[n_id].step(step, self._nm)
+                return n_id, decision, None
+            except Exception as exc:
+                return n_id, None, exc
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(run_agent, n) for n in active_nodes]
+            for future in concurrent.futures.as_completed(futures):
+                n_id, decision, exc = future.result()
+                if exc is not None:
+                    if isinstance(exc, RuntimeError):
+                        raise exc
+                    logger.warning("[Orchestrator] Agent %d error: %s", n_id, exc)
+                    continue
+
+                if decision and decision.state_changed:
+                    transitions[n_id] = (decision.old_state, decision.new_state)
 
         if transitions:
             self._log.log_state_transition(step, transitions)
