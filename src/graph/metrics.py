@@ -106,14 +106,28 @@ def compute_centralities(
     return result
 
 
-def _katz_centrality_sparse(G: nx.Graph, alpha: float) -> dict[int, float] | None:
+def _katz_centrality_sparse(
+    G: nx.Graph,
+    alpha: float,
+    max_iter: int = 1000,
+    tol: float = 1e-6,
+) -> dict[int, float] | None:
     """
-    Katz centrality via scipy sparse: risolve (I - alpha*A)^{-1} * 1
-    usando un risolutore iterativo (spsolve o bicgstab).
-    Memoria: O(E) — nessuna matrice densa.
+    Katz centrality via power iteration su matrice sparsa.
+
+    NOTA STORICA: la versione precedente risolveva (I - alpha*A)^{-1} * 1
+    con spsolve() (fattorizzazione LU diretta). Su grafi con distribuzione
+    di grado "scale-free"/hub-based (tipico di reti sociali ed
+    epidemiologiche) la fattorizzazione LU sparsa soffre di fill-in
+    catastrofico: il fattore L diventa denso anche se A e' sparsissima, e
+    il tempo/memoria richiesti esplodono SENZA che scipy lanci un'eccezione
+    o vada in timeout — il processo resta semplicemente bloccato.
+
+    Questa versione usa solo prodotti matrice-vettore sparsi (A @ x),
+    O(E) per iterazione: nessuna fattorizzazione, nessun fill-in. Scala
+    bene anche su grafi da centinaia di migliaia di nodi.
     """
     try:
-        import scipy.sparse as sp
         import scipy.sparse.linalg as spla
     except ImportError:
         logger.warning("[Metrics] scipy non disponibile, Katz saltata.")
@@ -121,26 +135,46 @@ def _katz_centrality_sparse(G: nx.Graph, alpha: float) -> dict[int, float] | Non
 
     n = G.number_of_nodes()
     nodes = list(G.nodes())
-    node_to_idx = {node: i for i, node in enumerate(nodes)}
+    A = nx.to_scipy_sparse_array(G, nodelist=nodes, format="csr", dtype=np.float64)
 
-    # Matrice di adiacenza sparsa
-    A = nx.to_scipy_sparse_array(G, nodelist=nodes, format="csc", dtype=np.float64)
-
-    # Risolvi (I - alpha*A) * x = 1
-    I = sp.eye(n, format="csc", dtype=np.float64)
-    M = I - alpha * A
-    b = np.ones(n, dtype=np.float64)
-
+    # La serie di Neumann (I - alpha*A)^-1 = sum_k (alpha*A)^k converge solo
+    # se alpha < 1 / lambda_max(A). Stimiamo lambda_max con eigsh (anch'esso
+    # basato solo su prodotti matrice-vettore, quindi economico) e, se
+    # necessario, riduciamo alpha per garantire la convergenza.
     try:
-        # Prova risolutore diretto (velocissimo per grafi fino a ~500k)
-        x = spla.spsolve(M, b)
-    except Exception:
-        # Fallback a iterativo
-        logger.info("[Metrics] Katz: fallback a risolutore iterativo (bicgstab)...")
-        x, info = spla.bicgstab(M, b, tol=1e-5, maxiter=500)
-        if info != 0:
-            logger.warning("[Metrics] Katz bicgstab non convergente (info=%d)", info)
-            return None
+        lambda_max = float(
+            spla.eigsh(A, k=1, which="LA", return_eigenvectors=False)[0]
+        )
+        if lambda_max > 0 and alpha >= 1.0 / lambda_max:
+            safe_alpha = 0.9 / lambda_max
+            logger.warning(
+                "[Metrics] Katz: alpha=%.4f non garantisce convergenza "
+                "(serve < %.4f). Uso alpha=%.4f per questa run.",
+                alpha, 1.0 / lambda_max, safe_alpha,
+            )
+            alpha = safe_alpha
+    except Exception as e:
+        logger.warning(
+            "[Metrics] Katz: stima lambda_max fallita (%s), procedo con alpha originale.",
+            e,
+        )
+
+    beta = 1.0
+    x = np.zeros(n, dtype=np.float64)
+    converged = False
+    for _ in range(max_iter):
+        x_new = alpha * (A @ x) + beta
+        if np.linalg.norm(x_new - x, ord=1) < tol:
+            x = x_new
+            converged = True
+            break
+        x = x_new
+
+    if not converged:
+        logger.warning(
+            "[Metrics] Katz: power iteration non convergente dopo %d iterazioni.",
+            max_iter,
+        )
 
     # Normalizza
     norm = np.sign(x.sum()) * np.linalg.norm(x)
