@@ -8,7 +8,7 @@
 # Execution Context
 # ---------------------------------------------------------------------------
 execution:
-  mode: "local"            # "local" | "kaggle"
+  mode: "kaggle"           # "local" | "kaggle"
   random_seed: 42
   log_level: "DEBUG"       # "DEBUG" | "INFO" | "WARNING"
 
@@ -36,7 +36,7 @@ dataset:
 # ---------------------------------------------------------------------------
 subgraph:
   strategy:       "bfs_seed"       # "bfs_seed" | "random_walk" | "random_nodes"
-  target_nodes:   1000             # nodi nel sottografo locale (1-5% di ~235k)
+  target_nodes:   300000           # nodi nel sottografo: > 235k per prendere tutto l'LCC
   min_component:  200              # scarta componenti connesse con meno di N nodi
   seed_strategy:  "high_degree"    # nodo di partenza BFS: "high_degree" | "random"
   output_file:    "data/processed/subgraph.gpickle"
@@ -95,8 +95,8 @@ llm:
     max_tokens:    512
 
   token_budget:
-    warn_at:       50000
-    hard_limit:    200000
+    warn_at:       999999999
+    hard_limit:    999999999
 
 # ---------------------------------------------------------------------------
 # GNN  (Fase 2)
@@ -111,9 +111,9 @@ gnn:
   embedding_dim:      128
   rewire_threshold_add:    0.8       # score > soglia -> aggiungi arco
   rewire_threshold_remove: 0.2       # score < soglia -> rimuovi arco
-  max_new_edges_per_step:  10
+  max_new_edges_per_step:  999999
   embedding_file:     "data/processed/embeddings.npy"
-  use_torch:          false          # true = PyTorch (Kaggle/GPU), false = NumPy (locale)
+  use_torch:          true           # true = PyTorch (Kaggle/GPU), false = NumPy (locale)
 
 # ---------------------------------------------------------------------------
 # Influence Maximization / CELF  (Fase 3)
