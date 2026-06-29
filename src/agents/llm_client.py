@@ -145,11 +145,12 @@ def extract_json(text: str, fallback: dict | None = None) -> tuple[dict, bool]:
     except json.JSONDecodeError:
         pass
 
-    # 3. Primo blocco JSON completo
-    match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}", cleaned, re.DOTALL)
-    if match:
+    # 3. Primo blocco JSON completo (dal primo { all'ultimo })
+    start_idx = cleaned.find("{")
+    end_idx = cleaned.rfind("}")
+    if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
         try:
-            return json.loads(match.group()), False
+            return json.loads(cleaned[start_idx:end_idx+1]), False
         except json.JSONDecodeError:
             pass
 
