@@ -76,14 +76,14 @@ def compute_centralities(
     except Exception as e:
         logger.warning("[Metrics] PageRank fallito: %s", e)
 
-    # --- Katz centrality (O(n)) ---
-    logger.debug("[Metrics] Katz centrality...")
+    # --- Katz centrality ---
+    logger.debug("[Metrics] Katz centrality (sparse power iteration)...")
     try:
-        katz = nx.katz_centrality_numpy(G, alpha=alpha_katz)
+        katz = nx.katz_centrality(G, alpha=alpha_katz, max_iter=2000, tol=1e-5)
         for n, v in katz.items():
             result[n]["katz"] = v
     except Exception as e:
-        logger.warning("[Metrics] Katz fallita: %s", e)
+        logger.warning("[Metrics] Katz fallita (probabile non convergenza): %s", e)
 
     # --- Betweenness (campionato, costoso) ---
     if cfg.metrics.compute_betweenness:
