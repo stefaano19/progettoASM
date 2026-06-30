@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -61,29 +62,48 @@ class LLMResponse:
 # ---------------------------------------------------------------------------
 
 class TokenBudget:
-    """Tracker cumulativo dei token consumati durante la simulazione."""
+    """
+    Tracker cumulativo dei token consumati durante la simulazione.
+
+    NOTA CONCORRENZA: con l'Orchestratore che dispaccia chiamate .chat()
+    su un thread pool (per parallelizzare l'I/O di rete verso l'LLM),
+    record() viene ora invocato da piu' thread contemporaneamente.
+    `cls._total_input += input_tokens` NON e' atomico in CPython (e' un
+    LOAD, ADD, STORE su tre bytecode separati) — senza lock, due thread
+    che incrementano "in contemporanea" possono perdere un conteggio,
+    facendo si' che l'hard_limit non scatti mai esattamente quando dovrebbe.
+    Il lock e' economico (la sezione critica e' tre incrementi su interi)
+    e quindi non introduce un collo di bottiglia percepibile.
+    """
 
     _total_input: int = 0
     _total_output: int = 0
     _warn_at: int = 50_000
     _hard_limit: int = 200_000
+    _lock = threading.Lock()
 
     @classmethod
     def configure(cls, warn_at: int, hard_limit: int) -> None:
-        cls._warn_at = warn_at
-        cls._hard_limit = hard_limit
+        with cls._lock:
+            cls._warn_at = warn_at
+            cls._hard_limit = hard_limit
 
     @classmethod
     def record(cls, input_tokens: int, output_tokens: int) -> None:
-        cls._total_input += input_tokens
-        cls._total_output += output_tokens
-        total = cls._total_input + cls._total_output
-        if total >= cls._hard_limit:
+        with cls._lock:
+            cls._total_input += input_tokens
+            cls._total_output += output_tokens
+            total = cls._total_input + cls._total_output
+            hit_hard = total >= cls._hard_limit
+            hit_warn = total >= cls._warn_at
+        # Log/raise FUORI dal lock: niente I/O (logging) o costruzione
+        # eccezioni mentre teniamo la sezione critica.
+        if hit_hard:
             raise RuntimeError(
                 f"[TokenBudget] Hard limit raggiunto: {total} token "
                 f"(limite={cls._hard_limit}). Simulazione interrotta."
             )
-        if total >= cls._warn_at:
+        if hit_warn:
             logger.warning(
                 "[TokenBudget] ⚠  %d token totali consumati (warn_at=%d).",
                 total, cls._warn_at,
@@ -154,7 +174,10 @@ def extract_json(text: str, fallback: dict | None = None) -> tuple[dict, bool]:
         except json.JSONDecodeError:
             pass
 
-    logger.warning("[LLMClient] JSON non parsabile — uso fallback.")
+    logger.warning(
+        "[LLMClient] JSON non parsabile — uso fallback. Estratto risposta: %r",
+        text[:200],
+    )
     return fb, True
 
 
@@ -367,11 +390,37 @@ class MockLLMClient:
         self._seed = seed
         self._infection_rate = infection_rate
         self._call_count = 0
+        # build_from_config usa MockLLMClient per default (use_mock_llm=True).
+        # Con l'Orchestratore che dispaccia .chat() su un thread pool, questo
+        # lock e' necessario per le stesse ragioni di TokenBudget piu' sopra.
+        self._lock = threading.Lock()
 
     def chat(self, messages: list[dict]) -> LLMResponse:
+        import hashlib
         import random
-        self._call_count += 1
-        rng = random.Random(self._seed + self._call_count)
+
+        # Solo per telemetria (call_count property) — protetto da lock perche'
+        # piu' thread possono chiamare chat() in contemporanea.
+        with self._lock:
+            self._call_count += 1
+            n = self._call_count
+
+        # NOTA: il seed della risposta NON usa piu' self._call_count.
+        # Prima del supporto alla concorrenza, call_count era deterministicamente
+        # legato a un nodo via l'ordine dello shuffle (sequenziale); con
+        # l'esecuzione parallela, quale thread incrementa il contatore per
+        # primo dipende dallo scheduling — quindi due run con lo STESSO seed
+        # potrebbero assegnare call_count diversi allo stesso nodo, rompendo
+        # la riproducibilita' che questa classe promette.
+        # Si deriva invece il seed da un hash del contenuto dei messaggi:
+        # stessa conversazione -> stessa risposta, sempre, a prescindere da
+        # ordine o thread di esecuzione. Allinea anche l'implementazione alla
+        # docstring della classe ("basata su hash del messaggio + seed"), che
+        # la versione precedente (solo self._seed + self._call_count) non
+        # rispettava davvero.
+        msg_key = json.dumps(messages, sort_keys=True, ensure_ascii=False)
+        msg_hash = int(hashlib.md5(msg_key.encode("utf-8")).hexdigest(), 16)
+        rng = random.Random(self._seed + msg_hash)
 
         # Determina stato proposto in modo deterministico
         proposed = "I" if rng.random() < self._infection_rate else "S"
@@ -381,9 +430,9 @@ class MockLLMClient:
         convincing = "convincente" if spread else "non convincente"
         opinion_text = "La narrativa e' reale e va diffusa." if spread else "Resto scettico."
         payload = {
-            "reasoning": f"Mock reasoning #{self._call_count}: "
+            "reasoning": f"Mock reasoning #{n}: "
                          f"Ho analizzato il feed e concludo che il tema e' {convincing}.",
-            "opinion": f"Opinion #{self._call_count}: {opinion_text}",
+            "opinion": f"Opinion #{n}: {opinion_text}",
             "susceptibility": susceptibility,
             "proposed_state": proposed,
             "spread_intent": spread,

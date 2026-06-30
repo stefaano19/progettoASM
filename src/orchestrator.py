@@ -5,10 +5,18 @@ SimulationOrchestrator: il cuore della co-evoluzione Fase 2.
 
 Loop co-evolutivo per step t
 -------------------------------
-  1. AGENT CYCLE
-     Per ogni nodo (ordine randomizzato):
-       agent.step(t) → decisione (stato, opinion, susceptibility)
+  1. AGENT CYCLE (vedi _agent_cycle per i dettagli)
+     a. prepare: per ogni nodo (ordine randomizzato), legge da
+        NetworkManager e costruisce i messaggi LLM (sequenziale)
+     b. dispatch: le chiamate llm.chat() vengono eseguite in PARALLELO
+        su un thread pool (qui si nasconde la latenza di rete)
+     c. finalize: parsing + transizione di stato + scrittura su
+        NetworkManager, stesso ordine dello shuffle (sequenziale)
      → NetworkManager aggiornato (stati, post, embedding perturbati)
+     NOTA: gli agenti dello step t leggono tutti lo stesso snapshot del
+     grafo (fine dello step t-1) — aggiornamento "sincrono/batch", non
+     piu' "asincrono" come nella versione originale. Vedi docstring di
+     _agent_cycle per i dettagli del trade-off.
 
   2. GNN CYCLE
      trainer.train_step(G_t, embeddings_t)   (fine-tuning)
@@ -38,6 +46,7 @@ Utilizzo
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import uuid
 from pathlib import Path
@@ -46,6 +55,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
+    from src.agents.agent import AgentStepContext
     from src.utils.config import Config
 
 logger = logging.getLogger(__name__)
@@ -346,48 +356,118 @@ class SimulationOrchestrator:
     # ------------------------------------------------------------------
 
     def _agent_cycle(self, step: int) -> int:
-        """Esegui il ciclo agenti. Ritorna il numero di transizioni."""
-        import concurrent.futures
-        from src.agents.state_machine import StateMachine
+        """
+        Esegui il ciclo agenti, con le chiamate LLM dispacciate su un thread pool.
 
+        Collo di bottiglia originario: loop Python sequenziale che chiamava
+        agent.step() — quindi anche la chiamata LLM, I/O di rete — un nodo
+        alla volta. Su ~230k nodi, con latenza reale di un backend API
+        (anche solo 1-2s/chiamata), un singolo step costava ore.
+
+        Soluzione in tre fasi:
+          1. PREPARE (sequenziale): legge da NetworkManager e costruisce i
+             messaggi per l'LLM. Nessuna chiamata di rete — solo operazioni
+             in memoria, quindi veloce anche per 230k nodi.
+          2. DISPATCH (parallelo): le chiamate llm.chat() di tutti i nodi
+             preparati vengono dispacciate su un pool di worker thread. Qui
+             si nasconde la latenza di rete — con N worker concorrenti il
+             tempo totale scala come (n_nodi / N) invece di n_nodi.
+          3. FINALIZE (sequenziale, stesso ordine del PREPARE): applica
+             parsing, transizione di stato e scritture su NetworkManager
+             (add_post, perturb_embedding, set_state).
+
+        NetworkManager non viene MAI toccato da un worker thread — solo
+        letture (fase 1) e scritture (fase 3) dal thread principale, quindi
+        nessuna race condition sullo stato del grafo.
+
+        CAMBIO DI SEMANTICA: nella versione sequenziale originale, un nodo
+        processato piu' tardi nello shuffle di uno step poteva vedere gli
+        effetti (post, stato) di nodi GIA' processati nello STESSO step
+        ("aggiornamento asincrono"). Qui invece tutti i nodi dello step t
+        leggono lo stesso snapshot, congelato alla fine dello step t-1
+        ("aggiornamento sincrono/batch" — schema standard nei modelli ad
+        agenti, ma comunque diverso dall'originale). Se la dinamica dipende
+        molto dalla propagazione *intra-step*, vale la pena confrontare le
+        metriche di un paio di step fra le due versioni prima di fidarsi
+        delle run lunghe.
+
+        get_all_states() viene chiamato UNA sola volta per l'intero step,
+        non una volta per nodo: se quel metodo e' O(n_nodi), chiamarlo 230k
+        volte sarebbe stato O(n^2) sull'intero step — un secondo collo di
+        bottiglia indipendente da quello LLM, mascherato finora dal primo.
+        """
         transitions: dict[int, tuple[str, str]] = {}
-        active_nodes = []
+        node_order = list(
+            self._nm.iter_nodes_shuffled(seed=self._cfg.execution.random_seed + step)
+        )
+
+        # Snapshot unico per l'intero step (vedi nota "cambio di semantica" sopra).
         all_states = self._nm.get_all_states()
 
-        # 1. Filtra i nodi attivi: salta i nodi "S" che non hanno vicini "I" o "F"
-        for node_id in self._nm.iter_nodes_shuffled(seed=self._cfg.execution.random_seed + step):
-            state = all_states.get(node_id, "S")
-            if state == "S":
-                neighbours = self._nm.neighbours(node_id)
-                nb_counts = StateMachine.get_neighbour_state_counts(
-                    node_id, all_states, neighbours
-                )
-                if nb_counts.get("I", 0) == 0 and nb_counts.get("F", 0) == 0:
-                    continue  # Salta: non transita e l'embedding non cambia
-            active_nodes.append(node_id)
-
-        # 2. Esegui in parallelo per abbattere il collo di bottiglia I/O (chiamate LLM)
-        max_workers = getattr(self._cfg.simulation, "max_workers", 32)
-
-        def run_agent(n_id: int):
+        # --- 1. PREPARE (sequenziale, solo letture, no I/O di rete) ---
+        contexts: dict[int, "AgentStepContext | None"] = {}
+        for node_id in node_order:
             try:
-                decision = self._agents[n_id].step(step, self._nm)
-                return n_id, decision, None
+                contexts[node_id] = self._agents[node_id].prepare_step(
+                    step, self._nm, all_states=all_states
+                )
             except Exception as exc:
-                return n_id, None, exc
+                logger.warning("[Orchestrator] Agent %d prepare error: %s", node_id, exc)
+                contexts[node_id] = None
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(run_agent, n) for n in active_nodes]
-            for future in concurrent.futures.as_completed(futures):
-                n_id, decision, exc = future.result()
-                if exc is not None:
-                    if isinstance(exc, RuntimeError):
-                        raise exc
-                    logger.warning("[Orchestrator] Agent %d error: %s", n_id, exc)
-                    continue
+        # Chiamate LLM concorrenti. Tara questo numero sui rate limit reali
+        # del tuo backend (provider API) o sulla capacita' della tua GPU
+        # (backend locale Ollama/vLLM) — un valore troppo alto produce solo
+        # piu' retry per throttling/429, non piu' velocita' reale. Aggiungi
+        # `max_concurrent_requests` a cfg.llm per renderlo configurabile;
+        # finche' non lo fai, resta a 30.
+        max_workers = getattr(
+            getattr(self._cfg, "llm", None), "max_concurrent_requests", 30
+        )
 
-                if decision and decision.state_changed:
-                    transitions[n_id] = (decision.old_state, decision.new_state)
+        # --- 2. DISPATCH (parallelo) ---
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+        futures: dict[int, concurrent.futures.Future] = {}
+        for node_id in node_order:
+            ctx = contexts[node_id]
+            if ctx is None:
+                continue
+            futures[node_id] = executor.submit(
+                self._agents[node_id].llm_client.chat, ctx.messages
+            )
+
+        # --- 3. FINALIZE (sequenziale, stesso ordine — scritture su NetworkManager) ---
+        for node_id in node_order:
+            ctx = contexts[node_id]
+            if ctx is None:
+                continue
+
+            try:
+                response = futures[node_id].result()
+            except RuntimeError:
+                # Token budget hard limit raggiunto in un worker thread.
+                # Stesso contratto della versione sequenziale: propaga
+                # subito all'Orchestratore. wait=False perche' a budget
+                # esaurito non ha senso bloccare in attesa di risposte che
+                # verrebbero comunque scartate.
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
+            except Exception as exc:
+                logger.warning("[Orchestrator] Agent %d LLM error: %s", node_id, exc)
+                response = None
+
+            try:
+                decision = self._agents[node_id].finalize_step(ctx, response, self._nm)
+            except Exception as exc:
+                logger.warning("[Orchestrator] Agent %d finalize error: %s", node_id, exc)
+                continue
+
+            if decision.state_changed:
+                transitions[node_id] = (decision.old_state, decision.new_state)
+
+        # A questo punto ogni future e' gia' stato attesto via .result(),
+        # quindi questo shutdown e' immediato (non c'e' nulla da aspettare).
+        executor.shutdown(wait=True)
 
         if transitions:
             self._log.log_state_transition(step, transitions)

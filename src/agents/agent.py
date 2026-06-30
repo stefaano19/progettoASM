@@ -48,6 +48,7 @@ from src.agents.prompts import (
 from src.agents.state_machine import AgentState, StateMachine
 
 if TYPE_CHECKING:
+    from src.agents.llm_client import LLMResponse
     from src.graph.network_manager import NetworkManager
     from src.utils.config import Config
 
@@ -76,6 +77,23 @@ class AgentDecision:
     tokens_in: int = 0
     tokens_out: int = 0
     is_fallback: bool = False     # True se LLM ha usato fallback JSON
+
+
+@dataclass
+class AgentStepContext:
+    """
+    Stato intermedio fra prepare_step() e finalize_step().
+
+    Esiste per permettere all'Orchestratore di disaccoppiare la fase di
+    percezione/costruzione prompt (CPU, veloce) dalla chiamata LLM vera e
+    propria (I/O di rete, lenta) e dalla fase di scrittura su
+    NetworkManager (deve restare sequenziale). Vedi
+    SimulationOrchestrator._agent_cycle per l'uso in batch concorrente.
+    """
+    old_state: str
+    current_step: int
+    messages: list[dict]
+    nb_state_counts: dict[str, int]
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +174,15 @@ class Agent:
     def state(self) -> str:
         return self._state.value
 
+    @property
+    def llm_client(self) -> LLMClient | MockLLMClient:
+        """
+        Espone il client LLM condiviso. Serve all'Orchestratore per dispacciare
+        le chiamate .chat() su un thread pool (vedi prepare_step/finalize_step)
+        senza dover accedere all'attributo privato _llm.
+        """
+        return self._llm
+
     def set_state(self, new_state: str) -> None:
         """Forza lo stato (usato da CELF per iniezione fact-checker)."""
         old = self._state.value
@@ -173,7 +200,15 @@ class Agent:
         network_manager: "NetworkManager",
     ) -> AgentDecision:
         """
-        Esegue un ciclo completo percezione → cognizione → azione → transizione.
+        Ciclo completo percezione -> cognizione -> azione -> transizione,
+        eseguito in un solo colpo (LLM chiamato qui direttamente).
+
+        Equivalente a prepare_step() + chiamata LLM + finalize_step().
+        Usalo per test, dry-run, MockLLMClient, o ovunque non serva
+        parallelizzare. Per grafi grandi con backend reale, l'Orchestratore
+        chiama prepare_step()/finalize_step() separatamente per dispacciare
+        le chiamate LLM di piu' agenti su un thread pool — vedi
+        SimulationOrchestrator._agent_cycle.
 
         Parameters
         ----------
@@ -187,17 +222,56 @@ class Agent:
         AgentDecision
             Decisione completa da usare per logging e aggiornamento del grafo.
         """
+        ctx = self.prepare_step(current_step, network_manager)
+
+        try:
+            response = self._llm.chat(ctx.messages)
+        except RuntimeError:
+            raise  # Token budget esaurito — propaga all'Orchestratore
+        except Exception as exc:
+            logger.error("[Agent %d] LLM error: %s", self.node_id, exc)
+            response = None
+
+        return self.finalize_step(ctx, response, network_manager)
+
+    def prepare_step(
+        self,
+        current_step: int,
+        network_manager: "NetworkManager",
+        all_states: dict[int, str] | None = None,
+    ) -> AgentStepContext:
+        """
+        Percezione + costruzione messaggi — NESSUNA chiamata LLM qui dentro.
+
+        Tutte le letture da NetworkManager avvengono qui. Pensato per essere
+        chiamato in un loop sequenziale dal thread principale dell'Orchestratore,
+        PRIMA di dispacciare le chiamate LLM (lente, I/O di rete) su un thread
+        pool: in questo modo NetworkManager non viene mai toccato da thread
+        diversi da quello principale.
+
+        Parameters
+        ----------
+        all_states : dict[int, str] | None
+            Snapshot pre-calcolato di network_manager.get_all_states().
+            Se l'Orchestratore chiama prepare_step() per centinaia di
+            migliaia di nodi nello stesso step, ricalcolare get_all_states()
+            ad ogni chiamata rischia di essere O(n) per chiamata e quindi
+            O(n^2) sull'intero step. Passandolo gia' calcolato una volta
+            sola si evita il problema. Se None (uso standalone via step()),
+            viene recuperato qui come prima.
+        """
         old_state = self._state.value
 
         # 1. Percezione
         feed = network_manager.get_feed(self.node_id, window=self._memory_window)
         neighbours = network_manager.neighbours(self.node_id)
-        all_states = network_manager.get_all_states()
+        if all_states is None:
+            all_states = network_manager.get_all_states()
         nb_state_counts = StateMachine.get_neighbour_state_counts(
             self.node_id, all_states, neighbours
         )
 
-        # 2. Cognizione — chiamata LLM
+        # 2. Costruzione prompt (nessuna chiamata LLM)
         user_prompt = build_user_prompt(
             feed=feed,
             state=self._state.value,
@@ -212,17 +286,40 @@ class Agent:
             self._state_update_note = ""
         messages.append({"role": "user", "content": user_prompt})
 
-        try:
-            response = self._llm.chat(messages)
-        except RuntimeError:
-            raise  # Token budget esaurito — propaga all'Orchestratore
-        except Exception as exc:
-            logger.error("[Agent %d] LLM error: %s", self.node_id, exc)
-            response = None
+        return AgentStepContext(
+            old_state=old_state,
+            current_step=current_step,
+            messages=messages,
+            nb_state_counts=nb_state_counts,
+        )
+
+    def finalize_step(
+        self,
+        ctx: AgentStepContext,
+        response: "LLMResponse | None",
+        network_manager: "NetworkManager",
+    ) -> AgentDecision:
+        """
+        Parsing, transizione di stato, scrittura su NetworkManager — a
+        partire da una risposta LLM gia' ottenuta (es. da un thread pool).
+
+        IMPORTANTE: va sempre chiamato dal thread principale, nello stesso
+        ordine usato per prepare_step(), per evitare scritture concorrenti
+        su NetworkManager (add_post, perturb_embedding, set_state non sono
+        garantite thread-safe e qui assumiamo non lo siano).
+        """
+        old_state = ctx.old_state
+        current_step = ctx.current_step
+        nb_state_counts = ctx.nb_state_counts
 
         # 3. Parsing output
         if response is not None:
-            llm_output, is_fallback = extract_json(response.content)
+            llm_output, parse_fallback = extract_json(response.content)
+            # response.is_fallback e' True quando LLMClient ha esaurito i retry
+            # e ha restituito il fallback come JSON valido (quindi extract_json
+            # non lo rileva come tale, perche' il parsing in se' riesce).
+            # Senza l'OR, questi casi venivano contati come risposte "vere".
+            is_fallback = response.is_fallback or parse_fallback
             tokens_in = response.input_tokens
             tokens_out = response.output_tokens
         else:
