@@ -79,7 +79,8 @@ simulation:
 # LLM Backend  (Fase 1-2)
 # ---------------------------------------------------------------------------
 llm:
-  backend: "api"           # "api" | "local"
+  backend: "local"           # "api" | "local"
+  max_concurrent_requests: 50
 
   api:
     provider:      "gemini"
@@ -89,8 +90,8 @@ llm:
     api_key_env:   "GEMINI_API_KEY"
 
   local:
-    base_url:      "http://localhost:11434/v1"
-    model:         "llama3"
+    base_url:      "http://localhost:8000/v1"
+    model:         "unsloth/llama-3-8b-Instruct"
     temperature:   0.7
     max_tokens:    512
 
