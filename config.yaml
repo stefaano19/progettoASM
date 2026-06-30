@@ -72,7 +72,7 @@ simulation:
   initial_infection_rate: 0.05    # % nodi inizialmente in stato I (pazienti zero)
   memory_window:          5        # sliding window: ultimi N post dei vicini
   rewiring_cooldown:      3        # step di cooldown tra rewiring consecutivi
-  checkpoint_every:       5        # salva checkpoint ogni N step
+  checkpoint_every:       1       # salva checkpoint ogni N step
   seeder_strategy:        "combined" # strategia selezione pazienti zero
 
 # ---------------------------------------------------------------------------
@@ -80,7 +80,7 @@ simulation:
 # ---------------------------------------------------------------------------
 llm:
   backend: "local"           # "api" | "local"
-  max_concurrent_requests: 500
+  max_concurrent_requests: 315
 
   api:
     provider:      "gemini"
