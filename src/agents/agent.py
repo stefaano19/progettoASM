@@ -223,6 +223,15 @@ class Agent:
             Decisione completa da usare per logging e aggiornamento del grafo.
         """
         ctx = self.prepare_step(current_step, network_manager)
+        if ctx is None:
+            return AgentDecision(
+                node_id=self.node_id, step=current_step,
+                old_state="S", new_state="S", state_changed=False,
+                opinion="", reasoning="Fast path: no exposure",
+                susceptibility=0.5, spread_intent=False,
+                infection_pressure=0.0, effective_threshold=0.5,
+                embedding_delta_norm=0.0,
+            )
 
         try:
             response = self._llm.chat(ctx.messages)
@@ -239,7 +248,7 @@ class Agent:
         current_step: int,
         network_manager: "NetworkManager",
         all_states: dict[int, str] | None = None,
-    ) -> AgentStepContext:
+    ) -> AgentStepContext | None:
         """
         Percezione + costruzione messaggi — NESSUNA chiamata LLM qui dentro.
 
@@ -270,6 +279,16 @@ class Agent:
         nb_state_counts = StateMachine.get_neighbour_state_counts(
             self.node_id, all_states, neighbours
         )
+
+        # --- FAST PATH OPTIMIZATION ---
+        # Se il nodo è "S" e non ha vicini attivi ("I" o "F"), la sua fraction_I e fraction_F
+        # sono 0. Nel modello Linear Threshold (StateMachine), fraction_I == 0 non potrà MAI 
+        # superare la soglia minima (0.05). Quindi il nodo non può cambiare stato.
+        # Inoltre un nodo neutro isolato pubblicherebbe solo opinioni neutre ridondanti.
+        # Saltando la costruzione del prompt e il dispatch LLM, risparmiamo un'enorme 
+        # quantità di computazione nei primi step per l'intera rete.
+        if old_state == "S" and nb_state_counts.get("I", 0) == 0 and nb_state_counts.get("F", 0) == 0:
+            return None
 
         # 2. Costruzione prompt (nessuna chiamata LLM)
         user_prompt = build_user_prompt(
