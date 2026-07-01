@@ -36,7 +36,7 @@ dataset:
 # ---------------------------------------------------------------------------
 subgraph:
   strategy:       "bfs_seed"       # "bfs_seed" | "random_walk" | "random_nodes"
-  target_nodes:   300000           # nodi nel sottografo: > 235k per prendere tutto l'LCC
+  target_nodes:   30000           # nodi nel sottografo: > 235k per prendere tutto l'LCC
   min_component:  200              # scarta componenti connesse con meno di N nodi
   seed_strategy:  "high_degree"    # nodo di partenza BFS: "high_degree" | "random"
   output_file:    "data/processed/subgraph.gpickle"
