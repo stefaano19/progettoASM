@@ -135,6 +135,7 @@ class LLMTokenBudget:
 @dataclass
 class LLMConfig:
     backend: str = "api"
+    max_concurrent_requests: int = 30
     api: LLMApiConfig = field(default_factory=LLMApiConfig)
     local: LLMLocalConfig = field(default_factory=LLMLocalConfig)
     token_budget: LLMTokenBudget = field(default_factory=LLMTokenBudget)

@@ -246,17 +246,33 @@ class GNNTrainer:
 
         scores: dict[tuple[int, int], float] = {}
 
-        # Score archi esistenti
-        for u, v in G.edges():
-            scores[(u, v)] = self._model.link_score(out[u], out[v])
+        # Vectorize existing edges
+        edges = list(G.edges())
+        if edges:
+            u_arr = np.array([u for u, v in edges])
+            v_arr = np.array([v for u, v in edges])
+            dot_prods = np.sum(out[u_arr] * out[v_arr], axis=1)
+            sigmoids = 1.0 / (1.0 + np.exp(-np.clip(dot_prods, -50, 50)))
+            for i, (u, v) in enumerate(edges):
+                scores[(u, v)] = float(sigmoids[i])
 
         # Score candidati per aggiunta
         if candidate_pairs is None:
             candidate_pairs = self._generate_candidates(G)
 
-        for u, v in candidate_pairs:
-            if (u, v) not in scores and (v, u) not in scores:
-                scores[(u, v)] = self._model.link_score(out[u], out[v])
+        if candidate_pairs:
+            filtered_cands = []
+            for u, v in candidate_pairs:
+                if (u, v) not in scores and (v, u) not in scores:
+                    filtered_cands.append((u, v))
+            
+            if filtered_cands:
+                u_arr = np.array([u for u, v in filtered_cands])
+                v_arr = np.array([v for u, v in filtered_cands])
+                dot_prods = np.sum(out[u_arr] * out[v_arr], axis=1)
+                sigmoids = 1.0 / (1.0 + np.exp(-np.clip(dot_prods, -50, 50)))
+                for i, (u, v) in enumerate(filtered_cands):
+                    scores[(u, v)] = float(sigmoids[i])
 
         return scores
 

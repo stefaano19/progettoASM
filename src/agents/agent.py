@@ -94,6 +94,8 @@ class AgentStepContext:
     current_step: int
     messages: list[dict]
     nb_state_counts: dict[str, int]
+    cached_response: "LLMResponse | None" = None
+    context_hash: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +140,8 @@ class Agent:
         # System prompt costruito alla creazione (rimane stabile salvo cambio stato)
         self._system_prompt: str = ""
         self._state_update_note: str = ""
+        self._last_context_hash: str | None = None
+        self._last_response: "LLMResponse | None" = None
 
         # Direzione fissa per perturbazione embedding (seed per riproducibilita')
         rng = np.random.default_rng(cfg.execution.random_seed + node_id)
@@ -280,6 +284,23 @@ class Agent:
             self.node_id, all_states, neighbours
         )
 
+        import hashlib
+        # Convertiamo feed e vicinato in stringa per l'hash (escludendo gli step dei post)
+        feed_str = str([{k: v for k, v in f.items() if k != "step"} for f in feed])
+        context_str = f"S:{old_state}|F:{feed_str}|N:{nb_state_counts}"
+        context_hash = hashlib.md5(context_str.encode()).hexdigest()
+
+        # --- SMART CACHE OPTIMIZATION ---
+        if getattr(self, "_last_context_hash", None) == context_hash and getattr(self, "_last_response", None) is not None:
+            return AgentStepContext(
+                old_state=old_state,
+                current_step=current_step,
+                messages=[],
+                nb_state_counts=nb_state_counts,
+                cached_response=self._last_response,
+                context_hash=context_hash
+            )
+
         # --- FAST PATH OPTIMIZATION ---
         # Se il nodo è "S" e non ha vicini attivi ("I" o "F"), la sua fraction_I e fraction_F
         # sono 0. Nel modello Linear Threshold (StateMachine), fraction_I == 0 non potrà MAI 
@@ -310,6 +331,7 @@ class Agent:
             current_step=current_step,
             messages=messages,
             nb_state_counts=nb_state_counts,
+            context_hash=context_hash
         )
 
     def finalize_step(
@@ -341,6 +363,11 @@ class Agent:
             is_fallback = response.is_fallback or parse_fallback
             tokens_in = response.input_tokens
             tokens_out = response.output_tokens
+            
+            # Salva in cache
+            if not is_fallback:
+                self._last_response = response
+                self._last_context_hash = getattr(ctx, "context_hash", None)
         else:
             from src.agents.llm_client import FALLBACK_AGENT_OUTPUT
             llm_output = FALLBACK_AGENT_OUTPUT.copy()

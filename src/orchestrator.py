@@ -432,6 +432,9 @@ class SimulationOrchestrator:
             ctx = contexts[node_id]
             if ctx is None:
                 continue
+            if getattr(ctx, "cached_response", None) is not None:
+                continue  # Smart Cache: salta la chiamata LLM se abbiamo già la risposta
+            
             futures[node_id] = executor.submit(
                 self._agents[node_id].llm_client.chat, ctx.messages
             )
@@ -442,19 +445,22 @@ class SimulationOrchestrator:
             if ctx is None:
                 continue
 
-            try:
-                response = futures[node_id].result()
-            except RuntimeError:
-                # Token budget hard limit raggiunto in un worker thread.
-                # Stesso contratto della versione sequenziale: propaga
-                # subito all'Orchestratore. wait=False perche' a budget
-                # esaurito non ha senso bloccare in attesa di risposte che
-                # verrebbero comunque scartate.
-                executor.shutdown(wait=False, cancel_futures=True)
-                raise
-            except Exception as exc:
-                logger.warning("[Orchestrator] Agent %d LLM error: %s", node_id, exc)
-                response = None
+            if getattr(ctx, "cached_response", None) is not None:
+                response = ctx.cached_response
+            else:
+                try:
+                    response = futures[node_id].result()
+                except RuntimeError:
+                    # Token budget hard limit raggiunto in un worker thread.
+                    # Stesso contratto della versione sequenziale: propaga
+                    # subito all'Orchestratore. wait=False perche' a budget
+                    # esaurito non ha senso bloccare in attesa di risposte che
+                    # verrebbero comunque scartate.
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    raise
+                except Exception as exc:
+                    logger.warning("[Orchestrator] Agent %d LLM error: %s", node_id, exc)
+                    response = None
 
             try:
                 decision = self._agents[node_id].finalize_step(ctx, response, self._nm)

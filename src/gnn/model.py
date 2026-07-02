@@ -143,15 +143,8 @@ if _TORCH_AVAILABLE:
             super().__init__()
             self.linear = nn.Linear(2 * in_dim, out_dim)
 
-        def forward(self, h: "torch.Tensor", adj: list[list[int]]) -> "torch.Tensor":
-            n = h.shape[0]
-            agg = torch.zeros_like(h)
-            for i in range(n):
-                nbrs = adj[i]
-                if nbrs:
-                    agg[i] = h[nbrs].mean(dim=0)
-                else:
-                    agg[i] = h[i]
+        def forward(self, h: "torch.Tensor", adj_sparse: "torch.Tensor") -> "torch.Tensor":
+            agg = torch.sparse.mm(adj_sparse, h)
             h_cat = torch.cat([h, agg], dim=1)
             return F.relu(self.linear(h_cat))
 
@@ -162,8 +155,29 @@ if _TORCH_AVAILABLE:
             self.layer2 = _TorchSAGELayer(hidden_dim, out_dim)
 
         def forward(self, adj: list[list[int]], h: "torch.Tensor") -> "torch.Tensor":
-            h1 = self.layer1(h, adj)
-            h2 = self.layer2(h1, adj)
+            n = h.shape[0]
+            
+            # Efficient vectorized-like list comprehensions
+            row = [i for i, nbrs in enumerate(adj) for _ in range(len(nbrs)) if nbrs]
+            col = [nbr for nbrs in adj if nbrs for nbr in nbrs]
+            val = [1.0 / len(nbrs) for nbrs in adj if nbrs for _ in range(len(nbrs))]
+            
+            # Add self-loops for isolated nodes
+            isolated = [i for i, nbrs in enumerate(adj) if not nbrs]
+            if isolated:
+                row.extend(isolated)
+                col.extend(isolated)
+                val.extend([1.0] * len(isolated))
+            
+            if not row:
+                adj_sparse = torch.sparse_coo_tensor(torch.empty(2, 0), torch.empty(0), (n, n), device=h.device, dtype=h.dtype)
+            else:
+                indices_t = torch.tensor([row, col], dtype=torch.int64)
+                values_t = torch.tensor(val, dtype=h.dtype)
+                adj_sparse = torch.sparse_coo_tensor(indices_t, values_t, (n, n), device=h.device).coalesce()
+
+            h1 = self.layer1(h, adj_sparse)
+            h2 = self.layer2(h1, adj_sparse)
             norms = h2.norm(dim=1, keepdim=True).clamp(min=1e-8)
             return h2 / norms
 
