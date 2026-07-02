@@ -40,6 +40,19 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+def _parallel_celf_chunk(args) -> list[tuple[int, float]]:
+    """Helper top-level per valutare i candidati in parallelo bypassando il GIL."""
+    import random
+    G, candidates, states, n_rounds, act_prob = args
+    rng = random.Random()
+    results = []
+    for node in candidates:
+        # Usa CELF._simulate_spread senza istanziare la classe
+        from src.influence.celf import CELF
+        gain = CELF._simulate_spread(G, [node], states, n_rounds, act_prob, rng)
+        results.append((node, gain))
+    return results
+
 if TYPE_CHECKING:
     import networkx as nx
     from src.utils.config import Config
@@ -130,25 +143,25 @@ class CELF:
             activation_prob[(v, u)] = 1.0 / deg_u
 
         # Calcola guadagno marginale iniziale per tutti i candidati in parallelo
-        logger.info("[CELF] Calcolo spread iniziale per tutti i candidati [Parallel]...")
+        logger.info("[CELF] Calcolo spread iniziale per tutti i candidati [ProcessPool]...")
         import multiprocessing as mp
         from concurrent.futures import ProcessPoolExecutor
         
         n_cores = max(1, mp.cpu_count() - 1)
-        # _parallel_simulate_spread helper can't be used directly without defining it top level, 
-        # but we can use ThreadPoolExecutor which doesn't need top-level functions and avoids pickling G/activation_prob!
-        # IC model spread is pure Python, threads will be GIL bound, but the dictionary is shared directly without copy.
-        from concurrent.futures import ThreadPoolExecutor
+        chunk_size = max(1, len(candidates) // n_cores) if candidates else 1
+        chunks = [candidates[i:i + chunk_size] for i in range(0, len(candidates), chunk_size)]
         
-        def _eval_initial(node: int) -> tuple[int, float]:
-            gain = self._simulate_spread(G, [node], states, self._n_rounds, activation_prob)
-            return (node, gain)
-            
-        with ThreadPoolExecutor(max_workers=n_cores * 2) as executor:
-            futures = [executor.submit(_eval_initial, node) for node in candidates]
+        # Sostituito ThreadPoolExecutor con ProcessPoolExecutor per bypassare il GIL di Python, 
+        # dato che il modello IC è cpu-bound. Usa context 'spawn' per evitare CUDA crash in Kaggle.
+        ctx = mp.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=n_cores, mp_context=ctx) as executor:
+            futures = [
+                executor.submit(_parallel_celf_chunk, (G, chunk, states, self._n_rounds, activation_prob))
+                for chunk in chunks
+            ]
             for f in futures:
-                node, gain = f.result()
-                heapq.heappush(heap, (-gain, 0, node))  # iteration 0
+                for node, gain in f.result():
+                    heapq.heappush(heap, (-gain, 0, node))  # iteration 0
 
         # Loop greedy lazy
         for iteration in range(k):

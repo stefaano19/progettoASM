@@ -39,8 +39,13 @@ logger = logging.getLogger(__name__)
 # Soglia oltre la quale usiamo versioni campionate/approssimate
 _LARGE_GRAPH_THRESHOLD = 10_000
 
-
-
+try:
+    import cugraph
+    import cudf
+    _CUGRAPH_AVAILABLE = True
+    logger.debug("[Metrics] cuGraph disponibile — accelerazione GPU abilitata.")
+except ImportError:
+    _CUGRAPH_AVAILABLE = False
 
 
 def _parallel_diameter_chunk(args: tuple[nx.Graph, list[int]]) -> int:
@@ -53,6 +58,15 @@ def _parallel_diameter_chunk(args: tuple[nx.Graph, list[int]]) -> int:
         if lengths:
             max_ecc = max(max_ecc, max(lengths.values()))
     return max_ecc
+
+
+def _parallel_betweenness_chunk(args: tuple[nx.Graph, list[int]]) -> dict[int, float]:
+    """Helper per calcolare betweenness in parallelo su un chunk di sorgenti."""
+    import networkx as nx
+    G, sources = args
+    return nx.betweenness_centrality_subset(
+        G, sources, list(G.nodes()), normalized=False, weight=None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -85,12 +99,21 @@ def compute_centralities(
         result[n_id]["degree_centrality"] = v
         result[n_id]["degree"] = G.degree(n_id)
 
-    # --- PageRank (scipy sparse, O(n * iterations)) ---
+    # --- PageRank ---
     logger.info("[Metrics] PageRank...")
     try:
-        pr = nx.pagerank(G, alpha=alpha_pr, max_iter=100, tol=1e-6)
-        for n_id, v in pr.items():
-            result[n_id]["pagerank"] = v
+        if _CUGRAPH_AVAILABLE:
+            import cugraph
+            import cudf
+            G_cu = cugraph.from_networkx(G)
+            df = cugraph.pagerank(G_cu, alpha=alpha_pr)
+            pr = df.to_pandas().set_index("vertex")["pagerank"].to_dict()
+            for n_id, v in pr.items():
+                result[n_id]["pagerank"] = v
+        else:
+            pr = nx.pagerank(G, alpha=alpha_pr, max_iter=100, tol=1e-6)
+            for n_id, v in pr.items():
+                result[n_id]["pagerank"] = v
     except Exception as e:
         logger.warning("[Metrics] PageRank fallito: %s", e)
 
@@ -104,14 +127,57 @@ def compute_centralities(
     except Exception as e:
         logger.warning("[Metrics] Katz fallita: %s", e)
 
-    # --- Betweenness (campionato, efficiente) ---
+    # --- Betweenness (campionato, efficiente in parallelo o su GPU) ---
     if cfg.metrics.compute_betweenness:
         logger.info("[Metrics] Betweenness (sample=%d)...", bet_sample)
         try:
             sample_size = min(bet_sample, n)
-            bc = nx.betweenness_centrality(G, k=sample_size, normalized=True, seed=seed)
-            for n_id, v in bc.items():
-                result[n_id]["betweenness"] = v
+            
+            if _CUGRAPH_AVAILABLE:
+                import cugraph
+                import cudf
+                logger.info("[Metrics] Betweenness su GPU (cugraph)...")
+                G_cu = cugraph.from_networkx(G)
+                # cuGraph scale is sometimes different, ma normalized=True gestisce il default
+                df = cugraph.betweenness_centrality(G_cu, k=sample_size, normalized=True)
+                bc = df.to_pandas().set_index("vertex")["betweenness_centrality"].to_dict()
+                for n_id, v in bc.items():
+                    result[n_id]["betweenness"] = v
+            else:
+                import multiprocessing as mp
+                from concurrent.futures import ProcessPoolExecutor
+                
+                rng = random.Random(seed)
+                sampled = rng.sample(list(G.nodes()), sample_size)
+                
+                n_cores = max(1, mp.cpu_count() - 1)
+                chunk_size = max(1, len(sampled) // n_cores)
+                chunks = [sampled[i:i + chunk_size] for i in range(0, len(sampled), chunk_size)]
+                
+                bc_raw = {n_id: 0.0 for n_id in G.nodes()}
+                ctx = mp.get_context("spawn")  # Evita CUDA initialization crash in Kaggle
+                with ProcessPoolExecutor(max_workers=n_cores, mp_context=ctx) as executor:
+                    futures = []
+                    for chunk in chunks:
+                        futures.append(executor.submit(_parallel_betweenness_chunk, (G, chunk)))
+                    for f in futures:
+                        res = f.result()
+                        for node, v in res.items():
+                            bc_raw[node] += v
+                
+                # Normalizzazione
+                scale = 1.0
+                if n > 2:
+                    scale = 1.0 / ((n - 1) * (n - 2))
+                scale *= float(n) / sample_size
+                
+                is_directed = G.is_directed() if hasattr(G, 'is_directed') else False
+                if not is_directed:
+                    scale *= 2.0  # In nx.betweenness_centrality undirected scale is 2 / ((n-1)(n-2))
+                
+                for n_id, v in bc_raw.items():
+                    result[n_id]["betweenness"] = v * scale
+                
         except Exception as e:
             logger.warning("[Metrics] Betweenness fallita: %s", e)
     else:
@@ -273,11 +339,12 @@ def _approx_diameter(G: nx.Graph, seed: int, samples: int = 30) -> int:
     sampled = rng.sample(list(lcc.nodes()), min(samples, lcc.number_of_nodes()))
     
     n_cores = max(1, mp.cpu_count() - 1)
-    chunk_size = max(1, len(sampled) // n_cores)
+    chunk_size = max(1, len(sampled) // n_cores) if sampled else 1
     chunks = [sampled[i:i + chunk_size] for i in range(0, len(sampled), chunk_size)]
     
     max_ecc = 0
-    with ProcessPoolExecutor(max_workers=n_cores) as executor:
+    ctx = mp.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=n_cores, mp_context=ctx) as executor:
         futures = []
         for chunk in chunks:
             futures.append(executor.submit(_parallel_diameter_chunk, (lcc, chunk)))
@@ -297,25 +364,32 @@ def compute_modularity(
 ) -> float:
     """
     Q-score (Modularity) tramite assegnazione community da Louvain.
-    Usa nx.community.modularity su grafo non diretto.
+    Usa python-louvain (community_louvain.modularity) per massima efficienza.
     """
     if not community_map:
         return float("nan")
 
-    communities_dict: dict[int, set] = {}
-    for node, comm_id in community_map.items():
-        if node in G:
-            communities_dict.setdefault(comm_id, set()).add(node)
-    communities = list(communities_dict.values())
-
-    if not communities:
-        return float("nan")
-
     try:
-        q = nx.community.modularity(G, communities)
+        import community.community_louvain as community_louvain
+        q = community_louvain.modularity(community_map, G)
+    except ImportError:
+        # Fallback a networkx se python-louvain non è disponibile
+        communities_dict: dict[int, set] = {}
+        for node, comm_id in community_map.items():
+            if node in G:
+                communities_dict.setdefault(comm_id, set()).add(node)
+        communities = list(communities_dict.values())
+        if not communities:
+            return float("nan")
+        try:
+            q = nx.community.modularity(G, communities)
+        except Exception as e:
+            logger.warning("[Metrics] Modularity fallita: %s", e)
+            q = float("nan")
     except Exception as e:
         logger.warning("[Metrics] Modularity fallita: %s", e)
         q = float("nan")
+
     return q
 
 
@@ -328,21 +402,26 @@ def compute_echo_chamber_index(
     Per ogni nodo, calcola la frazione di archi che vanno verso la stessa
     community. ECI = media di questa frazione su tutti i nodi con vicini.
     Range: [0, 1]. Valori alti indicano forte chiusura informativa.
+    Ottimizzato scorrendo gli archi invece dei vicini di ogni nodo (O(E) vs O(V * avg_deg)).
     """
     if not community_map:
         return float("nan")
 
+    intra_degree = {n: 0 for n in G.nodes()}
+    
+    # Scorriamo tutti gli archi una sola volta (più veloce di G.neighbors per ogni nodo)
+    for u, v in G.edges():
+        if u not in community_map or v not in community_map:
+            continue
+        if community_map[u] == community_map[v]:
+            intra_degree[u] += 1
+            intra_degree[v] += 1
+
     ratios: list[float] = []
     for node in G.nodes():
         deg = G.degree(node)
-        if deg == 0:
-            continue
-        my_comm = community_map.get(node, -1)
-        intra = sum(
-            1 for nb in G.neighbors(node)
-            if community_map.get(nb, -2) == my_comm
-        )
-        ratios.append(intra / deg)
+        if deg > 0:
+            ratios.append(intra_degree[node] / deg)
 
     return float(np.mean(ratios)) if ratios else 0.0
 
