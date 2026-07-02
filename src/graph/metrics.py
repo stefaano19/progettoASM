@@ -47,6 +47,18 @@ def _parallel_betweenness_chunk(args: tuple[nx.Graph, list[int]]) -> dict[int, f
     return nx.betweenness_centrality_subset(G, sources, list(G.nodes()), normalized=False)
 
 
+def _parallel_diameter_chunk(args: tuple[nx.Graph, list[int]]) -> int:
+    """Helper per calcolare i path più lunghi in parallelo (deve essere top-level)."""
+    import networkx as nx
+    G, sources = args
+    max_ecc = 0
+    for s in sources:
+        lengths = nx.single_source_shortest_path_length(G, s)
+        if lengths:
+            max_ecc = max(max_ecc, max(lengths.values()))
+    return max_ecc
+
+
 # ---------------------------------------------------------------------------
 # Centrality
 # ---------------------------------------------------------------------------
@@ -287,16 +299,28 @@ def compute_topological_metrics(G: nx.Graph, cfg: "Config") -> dict[str, Any]:
 
 def _approx_diameter(G: nx.Graph, seed: int, samples: int = 30) -> int:
     """
-    Stima del diametro campionando BFS da `samples` nodi random.
-    Complessita' O(samples * (n + m)).
+    Stima del diametro campionando BFS da `samples` nodi random in parallelo.
     """
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+    import random
+
     rng = random.Random(seed)
     lcc = G.subgraph(max(nx.connected_components(G), key=len))
     sampled = rng.sample(list(lcc.nodes()), min(samples, lcc.number_of_nodes()))
+    
+    n_cores = max(1, mp.cpu_count() - 1)
+    chunk_size = max(1, len(sampled) // n_cores)
+    chunks = [sampled[i:i + chunk_size] for i in range(0, len(sampled), chunk_size)]
+    
     max_ecc = 0
-    for s in sampled:
-        lengths = nx.single_source_shortest_path_length(lcc, s)
-        max_ecc = max(max_ecc, max(lengths.values()))
+    with ProcessPoolExecutor(max_workers=n_cores) as executor:
+        futures = []
+        for chunk in chunks:
+            futures.append(executor.submit(_parallel_diameter_chunk, (lcc, chunk)))
+        for f in futures:
+            max_ecc = max(max_ecc, f.result())
+            
     return max_ecc
 
 

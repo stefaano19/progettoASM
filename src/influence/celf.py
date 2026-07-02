@@ -120,11 +120,35 @@ class CELF:
         # Usiamo heap min-heap con gain negato per simulare max-heap
         heap: list[tuple[float, int, int]] = []
 
-        # Calcola guadagno marginale iniziale per tutti i candidati
-        logger.info("[CELF] Calcolo spread iniziale per tutti i candidati...")
-        for node in candidates:
-            gain = self._simulate_spread(G, [node], states, self._n_rounds)
-            heapq.heappush(heap, (-gain, 0, node))  # iteration 0
+        # Pre-calcola probabilita' di attivazione una sola volta (O(E) instead of O(V * E))
+        logger.info("[CELF] Pre-calcolo probabilita' di attivazione archi...")
+        activation_prob: dict[tuple[int, int], float] = {}
+        for u, v in G.edges():
+            deg_v = max(G.degree(v), 1)
+            deg_u = max(G.degree(u), 1)
+            activation_prob[(u, v)] = 1.0 / deg_v
+            activation_prob[(v, u)] = 1.0 / deg_u
+
+        # Calcola guadagno marginale iniziale per tutti i candidati in parallelo
+        logger.info("[CELF] Calcolo spread iniziale per tutti i candidati [Parallel]...")
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor
+        
+        n_cores = max(1, mp.cpu_count() - 1)
+        # _parallel_simulate_spread helper can't be used directly without defining it top level, 
+        # but we can use ThreadPoolExecutor which doesn't need top-level functions and avoids pickling G/activation_prob!
+        # IC model spread is pure Python, threads will be GIL bound, but the dictionary is shared directly without copy.
+        from concurrent.futures import ThreadPoolExecutor
+        
+        def _eval_initial(node: int) -> tuple[int, float]:
+            gain = self._simulate_spread(G, [node], states, self._n_rounds, activation_prob)
+            return (node, gain)
+            
+        with ThreadPoolExecutor(max_workers=n_cores * 2) as executor:
+            futures = [executor.submit(_eval_initial, node) for node in candidates]
+            for f in futures:
+                node, gain = f.result()
+                heapq.heappush(heap, (-gain, 0, node))  # iteration 0
 
         # Loop greedy lazy
         for iteration in range(k):
@@ -145,10 +169,10 @@ class CELF:
                 else:
                     # Rivaluta il marginal gain con i seed gia' selezionati
                     current_spread = self._simulate_spread(
-                        G, selected, states, self._n_rounds
+                        G, selected, states, self._n_rounds, activation_prob
                     )
                     new_spread = self._simulate_spread(
-                        G, selected + [node], states, self._n_rounds
+                        G, selected + [node], states, self._n_rounds, activation_prob
                     )
                     marginal = new_spread - current_spread
                     heapq.heappush(heap, (-marginal, iteration, node))
@@ -166,38 +190,18 @@ class CELF:
         seeds: list[int],
         agent_states: dict[int, str],
         n_rounds: int,
+        activation_prob: dict[tuple[int, int], float],
         rng: random.Random | None = None,
     ) -> float:
         """
         Stima il numero atteso di nodi raggiunti dalla propagazione
         a partire dai `seeds`, usando Monte Carlo con modello IC.
-
-        Parameters
-        ----------
-        G : nx.Graph
-        seeds : list[int]       Nodi di partenza.
-        agent_states : dict     Stati correnti degli agenti.
-        n_rounds : int          Numero di simulazioni Monte Carlo.
-        rng : random.Random     Generatore casuale (opzionale).
-
-        Returns
-        -------
-        float   Media del numero di nodi raggiunti nelle `n_rounds` simulazioni.
         """
         if not seeds:
             return 0.0
 
         _rng = rng or random.Random(42)
         total_reached = 0
-
-        # Pre-calcola probabilita' di attivazione per ogni arco
-        # P(u -> v) = 1 / deg(v) (modello IC classico normalizzato per grado)
-        activation_prob: dict[tuple[int, int], float] = {}
-        for u, v in G.edges():
-            deg_v = max(G.degree(v), 1)
-            deg_u = max(G.degree(u), 1)
-            activation_prob[(u, v)] = 1.0 / deg_v
-            activation_prob[(v, u)] = 1.0 / deg_u
 
         for _ in range(n_rounds):
             # BFS / wave di attivazione
@@ -237,6 +241,11 @@ class CELF:
     ) -> float:
         """Stima pubblica dello spread da un insieme di seed."""
         rng = random.Random(self._seed)
+        activation_prob: dict[tuple[int, int], float] = {}
+        for u, v in G.edges():
+            activation_prob[(u, v)] = 1.0 / max(G.degree(v), 1)
+            activation_prob[(v, u)] = 1.0 / max(G.degree(u), 1)
+            
         return self._simulate_spread(
-            G, seeds, agent_states or {}, self._n_rounds, rng
+            G, seeds, agent_states or {}, self._n_rounds, activation_prob, rng
         )
