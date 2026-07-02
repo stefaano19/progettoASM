@@ -182,31 +182,29 @@ class GNNTrainer:
         if not pos_edges:
             return 0.0
 
-        h = torch.tensor(embeddings, dtype=torch.float32)
-        nodes = sorted(G.nodes())
-        node_to_idx = {v: i for i, v in enumerate(nodes)}
-        adj = [
-            [node_to_idx[nb] for nb in G.neighbors(v) if nb in node_to_idx]
-            for v in nodes
-        ]
+        from src.gnn.model import build_sparse_adj
+        
+        device = next(self._model._model.parameters()).device
+        h = torch.tensor(embeddings, dtype=torch.float32, device=device)
+        adj_sparse = build_sparse_adj(G, device=device, dtype=h.dtype)
 
         avg_loss = 0.0
         for _ in range(self._epochs):
             self._optimizer.zero_grad()
-            out = self._model._model.forward(adj, h)
+            out = self._model._model.forward(adj_sparse, h)
 
             # Positivi
-            pos_u = torch.tensor([u for u, v in pos_edges])
-            pos_v = torch.tensor([v for u, v in pos_edges])
+            pos_u = torch.tensor([u for u, v in pos_edges], device=device)
+            pos_v = torch.tensor([v for u, v in pos_edges], device=device)
             pos_scores = (out[pos_u] * out[pos_v]).sum(dim=1)
-            pos_labels = torch.ones(len(pos_edges))
+            pos_labels = torch.ones(len(pos_edges), device=device)
 
             # Negativi
             if neg_edges:
-                neg_u = torch.tensor([u for u, v in neg_edges])
-                neg_v = torch.tensor([v for u, v in neg_edges])
+                neg_u = torch.tensor([u for u, v in neg_edges], device=device)
+                neg_v = torch.tensor([v for u, v in neg_edges], device=device)
                 neg_scores = (out[neg_u] * out[neg_v]).sum(dim=1)
-                neg_labels = torch.zeros(len(neg_edges))
+                neg_labels = torch.zeros(len(neg_edges), device=device)
 
                 scores = torch.cat([pos_scores, neg_scores])
                 labels = torch.cat([pos_labels, neg_labels])

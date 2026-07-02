@@ -138,6 +138,34 @@ class _NumpyGraphSAGE:
 # ---------------------------------------------------------------------------
 
 if _TORCH_AVAILABLE:
+    def build_sparse_adj(G: "nx.Graph", device="cpu", dtype=None) -> "torch.Tensor":
+        import networkx as nx
+        import numpy as np
+        
+        nodes = sorted(G.nodes())
+        A = nx.to_scipy_sparse_array(G, nodelist=nodes, format="coo", dtype=np.float32)
+        
+        row = A.row
+        col = A.col
+        data = np.ones_like(row, dtype=np.float32)
+        
+        degrees = np.array(A.sum(axis=1)).flatten()
+        isolated = np.where(degrees == 0)[0]
+        
+        if len(isolated) > 0:
+            row = np.concatenate([row, isolated])
+            col = np.concatenate([col, isolated])
+            data = np.concatenate([data, np.ones(len(isolated), dtype=np.float32)])
+            degrees[isolated] = 1.0
+            
+        data = data / degrees[row]
+        
+        indices = torch.tensor(np.vstack((row, col)), dtype=torch.int64)
+        values = torch.tensor(data, dtype=dtype if dtype is not None else torch.float32)
+        
+        adj_sparse = torch.sparse_coo_tensor(indices, values, torch.Size(A.shape), device=device)
+        return adj_sparse.coalesce()
+
     class _TorchSAGELayer(nn.Module):
         def __init__(self, in_dim: int, out_dim: int) -> None:
             super().__init__()
@@ -154,28 +182,7 @@ if _TORCH_AVAILABLE:
             self.layer1 = _TorchSAGELayer(in_dim, hidden_dim)
             self.layer2 = _TorchSAGELayer(hidden_dim, out_dim)
 
-        def forward(self, adj: list[list[int]], h: "torch.Tensor") -> "torch.Tensor":
-            n = h.shape[0]
-            
-            # Efficient vectorized-like list comprehensions
-            row = [i for i, nbrs in enumerate(adj) for _ in range(len(nbrs)) if nbrs]
-            col = [nbr for nbrs in adj if nbrs for nbr in nbrs]
-            val = [1.0 / len(nbrs) for nbrs in adj if nbrs for _ in range(len(nbrs))]
-            
-            # Add self-loops for isolated nodes
-            isolated = [i for i, nbrs in enumerate(adj) if not nbrs]
-            if isolated:
-                row.extend(isolated)
-                col.extend(isolated)
-                val.extend([1.0] * len(isolated))
-            
-            if not row:
-                adj_sparse = torch.sparse_coo_tensor(torch.empty(2, 0), torch.empty(0), (n, n), device=h.device, dtype=h.dtype)
-            else:
-                indices_t = torch.tensor([row, col], dtype=torch.int64)
-                values_t = torch.tensor(val, dtype=h.dtype)
-                adj_sparse = torch.sparse_coo_tensor(indices_t, values_t, (n, n), device=h.device).coalesce()
-
+        def forward(self, adj_sparse: "torch.Tensor", h: "torch.Tensor") -> "torch.Tensor":
             h1 = self.layer1(h, adj_sparse)
             h2 = self.layer2(h1, adj_sparse)
             norms = h2.norm(dim=1, keepdim=True).clamp(min=1e-8)
@@ -185,7 +192,8 @@ if _TORCH_AVAILABLE:
             return {k: v.detach().cpu().numpy() for k, v in self.state_dict().items()}
 
         def set_weights(self, weights: dict[str, np.ndarray]) -> None:
-            state = {k: torch.tensor(v) for k, v in weights.items()}
+            device = next(self.parameters()).device
+            state = {k: torch.tensor(v, device=device) for k, v in weights.items()}
             self.load_state_dict(state)
 
 
@@ -220,9 +228,10 @@ class GraphSAGEModel:
 
         if self._use_torch:
             import torch
-            self._model = _TorchGraphSAGE(in_dim, hidden_dim, out_dim)
+            self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self._model = _TorchGraphSAGE(in_dim, hidden_dim, out_dim).to(self._device)
             torch.manual_seed(seed)
-            logger.info("[GraphSAGE] Backend: PyTorch | in=%d hid=%d out=%d", in_dim, hidden_dim, out_dim)
+            logger.info("[GraphSAGE] Backend: PyTorch (%s) | in=%d hid=%d out=%d", self._device, in_dim, hidden_dim, out_dim)
         else:
             self._model = _NumpyGraphSAGE(in_dim, hidden_dim, out_dim, seed)
             logger.info("[GraphSAGE] Backend: NumPy | in=%d hid=%d out=%d", in_dim, hidden_dim, out_dim)
@@ -244,20 +253,20 @@ class GraphSAGEModel:
         -------
         np.ndarray (n, out_dim) — nuovi embedding normalizzati L2.
         """
-        nodes = sorted(G.nodes())
-        node_to_idx = {v: i for i, v in enumerate(nodes)}
-        adj = [
-            [node_to_idx[nb] for nb in G.neighbors(v) if nb in node_to_idx]
-            for v in nodes
-        ]
-
         if self._use_torch:
             import torch
-            h = torch.tensor(embeddings, dtype=torch.float32)
+            h = torch.tensor(embeddings, dtype=torch.float32, device=self._device)
+            adj_sparse = build_sparse_adj(G, device=self._device, dtype=h.dtype)
             with torch.no_grad():
-                out = self._model.forward(adj, h)
-            return out.numpy()
+                out = self._model.forward(adj_sparse, h)
+            return out.cpu().numpy()
         else:
+            nodes = sorted(G.nodes())
+            node_to_idx = {v: i for i, v in enumerate(nodes)}
+            adj = [
+                [node_to_idx[nb] for nb in G.neighbors(v) if nb in node_to_idx]
+                for v in nodes
+            ]
             return self._model.forward(adj, embeddings)
 
     def link_score(self, emb_u: np.ndarray, emb_v: np.ndarray) -> float:

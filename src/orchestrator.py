@@ -310,8 +310,10 @@ class SimulationOrchestrator:
 
         # 4. METRICS
         belief_map = self._nm.get_belief_map()
+        force_topo = (n_added > 0 or n_removed > 0)
         metrics = compute_all_metrics(
-            self._nm.G, self._cfg, self._community_map, belief_map
+            self._nm.G, self._cfg, self._community_map, belief_map,
+            force_topology_update=force_topo
         )
         state_counts = StateMachine.count_states(self._nm.get_all_states())
         metrics.update({

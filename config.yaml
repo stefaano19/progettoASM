@@ -55,7 +55,7 @@ metrics:
 # Community Detection  (Fase 0)
 # ---------------------------------------------------------------------------
 community:
-  algorithm:      "louvain"        # "louvain" | "label_propagation"
+  algorithm:      "label_propagation"        # "louvain" | "label_propagation"
   resolution:     1.0              # parametro Louvain (>1 community piu' piccole)
   output_file:    "data/processed/community_map.json"
 
@@ -70,7 +70,7 @@ simulation:
     where researchers selectively engage only with like-minded peers, forming
     self-reinforcing information bubbles that reduce cross-community knowledge.
   initial_infection_rate: 0.05    # % nodi inizialmente in stato I (pazienti zero)
-  memory_window:          5        # sliding window: ultimi N post dei vicini
+  memory_window:          3        # sliding window: ultimi N post dei vicini
   rewiring_cooldown:      3        # step di cooldown tra rewiring consecutivi
   checkpoint_every:       1       # salva checkpoint ogni N step
   seeder_strategy:        "combined" # strategia selezione pazienti zero
@@ -121,6 +121,6 @@ gnn:
 # ---------------------------------------------------------------------------
 influence:
   budget_k:           10             # numero seed fact-checker da iniettare
-  simulation_rounds:  100            # Monte Carlo per stima spread
+  simulation_rounds:  30            # Monte Carlo per stima spread
   activation_threshold: 0.4         # soglia infection_rate per attivare CELF
   celf_interval:      5             # ogni quanti step riesegui CELF

@@ -40,6 +40,13 @@ logger = logging.getLogger(__name__)
 _LARGE_GRAPH_THRESHOLD = 10_000
 
 
+def _parallel_betweenness_chunk(args: tuple[nx.Graph, list[int]]) -> dict[int, float]:
+    """Helper per calcolare la betweenness in parallelo (deve essere top-level)."""
+    import networkx as nx
+    G, sources = args
+    return nx.betweenness_centrality_subset(G, sources, list(G.nodes()), normalized=False)
+
+
 # ---------------------------------------------------------------------------
 # Centrality
 # ---------------------------------------------------------------------------
@@ -89,11 +96,45 @@ def compute_centralities(
     except Exception as e:
         logger.warning("[Metrics] Katz fallita: %s", e)
 
-    # --- Betweenness (campionato, costoso) ---
+    # --- Betweenness (campionato, costoso, parallelizzato) ---
     if cfg.metrics.compute_betweenness:
-        logger.info("[Metrics] Betweenness (sample=%d)...", bet_sample)
+        logger.info("[Metrics] Betweenness (sample=%d) [Parallel]...", bet_sample)
         try:
-            bc = nx.betweenness_centrality(G, k=bet_sample, seed=seed, normalized=True)
+            import multiprocessing as mp
+            from concurrent.futures import ProcessPoolExecutor
+            import random
+
+            rng = random.Random(seed)
+            nodes = list(G.nodes())
+            sample_size = min(bet_sample, n)
+            sampled = rng.sample(nodes, sample_size)
+
+            n_cores = max(1, mp.cpu_count() - 1)
+            chunk_size = max(1, len(sampled) // n_cores)
+            chunks = [sampled[i:i + chunk_size] for i in range(0, len(sampled), chunk_size)]
+
+            bc = {n_id: 0.0 for n_id in nodes}
+
+            with ProcessPoolExecutor(max_workers=n_cores) as executor:
+                futures = []
+                for chunk in chunks:
+                    futures.append(executor.submit(_parallel_betweenness_chunk, (G, chunk)))
+                for f in futures:
+                    partial = f.result()
+                    for k_id, v in partial.items():
+                        bc[k_id] += v
+
+            # Normalizzazione
+            if n > 2:
+                scale = 1.0 / ((n - 1) * (n - 2))
+                if sample_size < n:
+                    scale *= float(n) / sample_size
+                for k_id in bc:
+                    bc[k_id] *= scale
+            else:
+                for k_id in bc:
+                    bc[k_id] = 0.0
+
             for n_id, v in bc.items():
                 result[n_id]["betweenness"] = v
         except Exception as e:
@@ -337,21 +378,43 @@ def compute_belief_polarisation(belief_states: dict[int, float]) -> float:
 # All-in-one snapshot
 # ---------------------------------------------------------------------------
 
+# Cache globale per metriche topologiche statiche
+_CACHE = {
+    "num_edges": None,
+    "topological_metrics": None,
+    "modularity_q": None,
+    "echo_chamber_index": None
+}
+
 def compute_all_metrics(
     G: nx.Graph,
     cfg: "Config",
     community_map: dict[int, int] | None = None,
     belief_states: dict[int, float] | None = None,
+    force_topology_update: bool = False,
 ) -> dict[str, Any]:
     """
     Calcola tutte le metriche disponibili in un unico dict.
     Adatto per logging a ogni step temporale.
+    Ottimizzato con caching: ricalcola le metriche topologiche solo se il numero di archi cambia 
+    oppure se force_topology_update è True.
     """
-    metrics = compute_topological_metrics(G, cfg)
+    global _CACHE
+    m = G.number_of_edges()
+
+    # Ricalcola se esplicitamente richiesto, se la cache è vuota, o se num_edges è cambiato
+    if force_topology_update or _CACHE["topological_metrics"] is None or _CACHE["num_edges"] != m:
+        _CACHE["topological_metrics"] = compute_topological_metrics(G, cfg)
+        if community_map:
+            _CACHE["modularity_q"] = compute_modularity(G, community_map)
+            _CACHE["echo_chamber_index"] = compute_echo_chamber_index(G, community_map)
+        _CACHE["num_edges"] = m
+
+    metrics = _CACHE["topological_metrics"].copy()
 
     if community_map:
-        metrics["modularity_q"] = compute_modularity(G, community_map)
-        metrics["echo_chamber_index"] = compute_echo_chamber_index(G, community_map)
+        metrics["modularity_q"] = _CACHE["modularity_q"]
+        metrics["echo_chamber_index"] = _CACHE["echo_chamber_index"]
     else:
         metrics["modularity_q"] = None
         metrics["echo_chamber_index"] = None
