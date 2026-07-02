@@ -40,11 +40,7 @@ logger = logging.getLogger(__name__)
 _LARGE_GRAPH_THRESHOLD = 10_000
 
 
-def _parallel_betweenness_chunk(args: tuple[nx.Graph, list[int]]) -> dict[int, float]:
-    """Helper per calcolare la betweenness in parallelo (deve essere top-level)."""
-    import networkx as nx
-    G, sources = args
-    return nx.betweenness_centrality_subset(G, sources, list(G.nodes()), normalized=False)
+
 
 
 def _parallel_diameter_chunk(args: tuple[nx.Graph, list[int]]) -> int:
@@ -108,45 +104,12 @@ def compute_centralities(
     except Exception as e:
         logger.warning("[Metrics] Katz fallita: %s", e)
 
-    # --- Betweenness (campionato, costoso, parallelizzato) ---
+    # --- Betweenness (campionato, efficiente) ---
     if cfg.metrics.compute_betweenness:
-        logger.info("[Metrics] Betweenness (sample=%d) [Parallel]...", bet_sample)
+        logger.info("[Metrics] Betweenness (sample=%d)...", bet_sample)
         try:
-            import multiprocessing as mp
-            from concurrent.futures import ProcessPoolExecutor
-            import random
-
-            rng = random.Random(seed)
-            nodes = list(G.nodes())
             sample_size = min(bet_sample, n)
-            sampled = rng.sample(nodes, sample_size)
-
-            n_cores = max(1, mp.cpu_count() - 1)
-            chunk_size = max(1, len(sampled) // n_cores)
-            chunks = [sampled[i:i + chunk_size] for i in range(0, len(sampled), chunk_size)]
-
-            bc = {n_id: 0.0 for n_id in nodes}
-
-            with ProcessPoolExecutor(max_workers=n_cores) as executor:
-                futures = []
-                for chunk in chunks:
-                    futures.append(executor.submit(_parallel_betweenness_chunk, (G, chunk)))
-                for f in futures:
-                    partial = f.result()
-                    for k_id, v in partial.items():
-                        bc[k_id] += v
-
-            # Normalizzazione
-            if n > 2:
-                scale = 1.0 / ((n - 1) * (n - 2))
-                if sample_size < n:
-                    scale *= float(n) / sample_size
-                for k_id in bc:
-                    bc[k_id] *= scale
-            else:
-                for k_id in bc:
-                    bc[k_id] = 0.0
-
+            bc = nx.betweenness_centrality(G, k=sample_size, normalized=True, seed=seed)
             for n_id, v in bc.items():
                 result[n_id]["betweenness"] = v
         except Exception as e:
@@ -371,15 +334,15 @@ def compute_echo_chamber_index(
 
     ratios: list[float] = []
     for node in G.nodes():
-        neighbours = list(G.neighbors(node))
-        if not neighbours:
+        deg = G.degree(node)
+        if deg == 0:
             continue
         my_comm = community_map.get(node, -1)
         intra = sum(
-            1 for nb in neighbours
+            1 for nb in G.neighbors(node)
             if community_map.get(nb, -2) == my_comm
         )
-        ratios.append(intra / len(neighbours))
+        ratios.append(intra / deg)
 
     return float(np.mean(ratios)) if ratios else 0.0
 
