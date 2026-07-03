@@ -497,4 +497,3 @@ class MockLLMClient:
     @property
     def call_count(self) -> int:
         return self._call_count
-lf._call_count
