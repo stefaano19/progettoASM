@@ -72,7 +72,7 @@ simulation:
   initial_infection_rate: 0.05    # % nodi inizialmente in stato I (pazienti zero)
   activation_probability: 0.3     # % di nodi attivati ad ogni step (Stochastic Updating)
   memory_window:          3        # sliding window: ultimi N post dei vicini
-  rewiring_cooldown:      3        # step di cooldown tra rewiring consecutivi
+  rewiring_cooldown:      9        # step di cooldown tra rewiring consecutivi
   checkpoint_every:       1       # salva checkpoint ogni N step
   seeder_strategy:        "combined" # strategia selezione pazienti zero
 
@@ -124,4 +124,4 @@ influence:
   budget_k:           10             # numero seed fact-checker da iniettare
   simulation_rounds:  30            # Monte Carlo per stima spread
   activation_threshold: 0.4         # soglia infection_rate per attivare CELF
-  celf_interval:      5             # ogni quanti step riesegui CELF
+  celf_interval:      15             # ogni quanti step riesegui CELF
