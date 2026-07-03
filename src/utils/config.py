@@ -103,6 +103,7 @@ class SimulationConfig:
     topic: str = "echo_chamber_polarization"
     topic_description: str = ""
     initial_infection_rate: float = 0.05
+    activation_probability: float = 1.0
     memory_window: int = 5
     rewiring_cooldown: int = 3
     checkpoint_every: int = 5
