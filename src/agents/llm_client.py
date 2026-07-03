@@ -272,6 +272,7 @@ class _OpenAICompatibleBackend:
             messages=messages,  # type: ignore[arg-type]
             temperature=self._temperature,
             max_tokens=self._max_tokens,
+            timeout=None,  # Evita timeout per code lunghe su vLLM
         )
         latency = time.perf_counter() - t0
         choice = resp.choices[0]
