@@ -63,13 +63,14 @@ community:
 # Agent / Simulation  (Fase 1-2)
 # ---------------------------------------------------------------------------
 simulation:
-  max_steps:             20
+  max_steps:             60
   topic:                 "echo_chamber_polarization"
   topic_description: >
     The spread of polarizing narratives within academic collaboration networks,
     where researchers selectively engage only with like-minded peers, forming
     self-reinforcing information bubbles that reduce cross-community knowledge.
   initial_infection_rate: 0.05    # % nodi inizialmente in stato I (pazienti zero)
+  activation_probability: 0.3     # % di nodi attivati ad ogni step (Stochastic Updating)
   memory_window:          3        # sliding window: ultimi N post dei vicini
   rewiring_cooldown:      3        # step di cooldown tra rewiring consecutivi
   checkpoint_every:       1       # salva checkpoint ogni N step

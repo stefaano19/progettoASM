@@ -11,6 +11,7 @@ Features
 - Estrazione JSON robusta dall'output testuale (strip fences, fallback)
 - TokenBudget globale con warn e hard-limit
 - MockLLMClient deterministico per test e dry-run locali
+- DiskCache per caching persistente delle risposte (utile per Kaggle 12h limit)
 
 Utilizzo
 --------
@@ -28,7 +29,9 @@ import os
 import re
 import threading
 import time
+import hashlib
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -58,24 +61,71 @@ class LLMResponse:
 
 
 # ---------------------------------------------------------------------------
+# DiskCache (Persistenza per run lunghe su Kaggle)
+# ---------------------------------------------------------------------------
+
+class LLMDiskCache:
+    """
+    Cache su disco thread-safe per le risposte LLM.
+    Evita di rifare chiamate API costose se la sessione (es. Kaggle) viene
+    interrotta a meta' di uno step lungo.
+    """
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, cache_dir: str = "results/checkpoints"):
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super(LLMDiskCache, cls).__new__(cls)
+                cls._instance._init(cache_dir)
+            return cls._instance
+
+    def _init(self, cache_dir: str):
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_file = self.cache_dir / "llm_cache.jsonl"
+        self.cache = {}
+        
+        # Load existing cache
+        if self.cache_file.exists():
+            logger.info("[LLMDiskCache] Caricamento cache da %s...", self.cache_file)
+            try:
+                with open(self.cache_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if not line.strip(): continue
+                        data = json.loads(line)
+                        self.cache[data["key"]] = data["response"]
+                logger.info("[LLMDiskCache] Caricate %d risposte.", len(self.cache))
+            except Exception as e:
+                logger.error("[LLMDiskCache] Errore caricamento cache: %s", e)
+        
+        self._file_handle = open(self.cache_file, "a", encoding="utf-8")
+        self._write_lock = threading.Lock()
+
+    def get(self, key: str) -> dict | None:
+        return self.cache.get(key)
+
+    def set(self, key: str, response: dict) -> None:
+        if key in self.cache:
+            return
+        self.cache[key] = response
+        with self._write_lock:
+            try:
+                line = json.dumps({"key": key, "response": response}, ensure_ascii=False)
+                self._file_handle.write(line + "\n")
+                self._file_handle.flush()
+            except Exception as e:
+                logger.error("[LLMDiskCache] Errore scrittura cache: %s", e)
+
+
+# ---------------------------------------------------------------------------
 # TokenBudget (singleton globale)
 # ---------------------------------------------------------------------------
 
 class TokenBudget:
     """
     Tracker cumulativo dei token consumati durante la simulazione.
-
-    NOTA CONCORRENZA: con l'Orchestratore che dispaccia chiamate .chat()
-    su un thread pool (per parallelizzare l'I/O di rete verso l'LLM),
-    record() viene ora invocato da piu' thread contemporaneamente.
-    `cls._total_input += input_tokens` NON e' atomico in CPython (e' un
-    LOAD, ADD, STORE su tre bytecode separati) — senza lock, due thread
-    che incrementano "in contemporanea" possono perdere un conteggio,
-    facendo si' che l'hard_limit non scatti mai esattamente quando dovrebbe.
-    Il lock e' economico (la sezione critica e' tre incrementi su interi)
-    e quindi non introduce un collo di bottiglia percepibile.
     """
-
     _total_input: int = 0
     _total_output: int = 0
     _warn_at: int = 50_000
@@ -96,8 +146,6 @@ class TokenBudget:
             total = cls._total_input + cls._total_output
             hit_hard = total >= cls._hard_limit
             hit_warn = total >= cls._warn_at
-        # Log/raise FUORI dal lock: niente I/O (logging) o costruzione
-        # eccezioni mentre teniamo la sezione critica.
         if hit_hard:
             raise RuntimeError(
                 f"[TokenBudget] Hard limit raggiunto: {total} token "
@@ -119,7 +167,6 @@ class TokenBudget:
 
     @classmethod
     def reset(cls) -> None:
-        """Reset per test o nuove run."""
         cls._total_input = 0
         cls._total_output = 0
 
@@ -136,36 +183,20 @@ FALLBACK_AGENT_OUTPUT = {
     "spread_intent": False,
 }
 
-
 def extract_json(text: str, fallback: dict | None = None) -> tuple[dict, bool]:
-    """
-    Estrae un oggetto JSON dall'output testuale dell'LLM.
-    Strategie (in ordine):
-      1. Parse diretto.
-      2. Strip di markdown code fences.
-      3. Regex: primo blocco { ... } valido.
-      4. Fallback dict.
-
-    Returns
-    -------
-    (parsed_dict, is_fallback)
-    """
     fb = fallback if fallback is not None else FALLBACK_AGENT_OUTPUT.copy()
 
-    # 1. Parse diretto
     try:
         return json.loads(text.strip()), False
     except json.JSONDecodeError:
         pass
 
-    # 2. Strip fences
     cleaned = re.sub(r"```(?:json)?", "", text).strip()
     try:
         return json.loads(cleaned), False
     except json.JSONDecodeError:
         pass
 
-    # 3. Primo blocco JSON completo (dal primo { all'ultimo })
     start_idx = cleaned.find("{")
     end_idx = cleaned.rfind("}")
     if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
@@ -204,8 +235,6 @@ class _GeminiBackend:
         self._max_tokens = cfg.get("max_tokens", 512)
 
     def chat(self, messages: list[dict]) -> LLMResponse:
-        import google.generativeai as genai  # type: ignore
-
         system_parts = [m["content"] for m in messages if m["role"] == "system"]
         history_msgs = [m for m in messages if m["role"] != "system"]
 
@@ -272,7 +301,7 @@ class _OpenAICompatibleBackend:
             messages=messages,  # type: ignore[arg-type]
             temperature=self._temperature,
             max_tokens=self._max_tokens,
-            timeout=None,  # Evita timeout per code lunghe su vLLM
+            timeout=None, 
         )
         latency = time.perf_counter() - t0
         choice = resp.choices[0]
@@ -293,18 +322,12 @@ class _OpenAICompatibleBackend:
 
 class LLMClient:
     """
-    Client LLM portabile con retry e token budget.
-
-    Parameters
-    ----------
-    llm_config : dict
-        Sezione 'llm' del config.yaml (gia' parsata).
-    max_retries : int
-        Numero di tentativi su errori transitori (default 3).
+    Client LLM portabile con retry, token budget e disk cache.
     """
 
     def __init__(self, llm_config: dict, max_retries: int = 3) -> None:
         self._max_retries = max_retries
+        self._cache = LLMDiskCache()
         backend_key = llm_config.get("backend", "api")
 
         if backend_key == "api":
@@ -331,18 +354,39 @@ class LLMClient:
 
     @classmethod
     def from_config(cls, cfg: "Config") -> "LLMClient":
-        """Factory method: costruisce il client dalla Config dataclass."""
         import dataclasses
         llm_cfg = dataclasses.asdict(cfg.llm)
         return cls(llm_cfg)
 
     def chat(self, messages: list[dict]) -> LLMResponse:
-        """Invia messaggi con retry e registra token nel budget globale."""
+        msg_key = json.dumps(messages, sort_keys=True, ensure_ascii=False)
+        msg_hash = hashlib.md5(msg_key.encode("utf-8")).hexdigest()
+
+        cached_data = self._cache.get(msg_hash)
+        if cached_data:
+            return LLMResponse(
+                content=cached_data["content"],
+                input_tokens=cached_data.get("input_tokens", 0),
+                output_tokens=cached_data.get("output_tokens", 0),
+                model=cached_data.get("model", "cached"),
+                latency_s=0.0,
+                is_fallback=cached_data.get("is_fallback", False)
+            )
+
         last_exc: Exception | None = None
         for attempt in range(self._max_retries):
             try:
                 response = self._backend.chat(messages)
                 TokenBudget.record(response.input_tokens, response.output_tokens)
+                
+                self._cache.set(msg_hash, {
+                    "content": response.content,
+                    "input_tokens": response.input_tokens,
+                    "output_tokens": response.output_tokens,
+                    "model": response.model,
+                    "is_fallback": response.is_fallback
+                })
+
                 logger.debug(
                     "[LLMClient] tokens in=%d out=%d latency=%.2fs",
                     response.input_tokens, response.output_tokens, response.latency_s,
@@ -360,10 +404,18 @@ class LLMClient:
                 time.sleep(wait)
 
         logger.error("[LLMClient] Tutti i retry esauriti. Uso fallback.")
-        return LLMResponse(
+        fallback_resp = LLMResponse(
             content=json.dumps(FALLBACK_AGENT_OUTPUT),
             is_fallback=True,
         )
+        self._cache.set(msg_hash, {
+            "content": fallback_resp.content,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "model": "fallback",
+            "is_fallback": True
+        })
+        return fallback_resp
 
     @staticmethod
     def token_summary() -> dict[str, int]:
@@ -377,53 +429,39 @@ class LLMClient:
 class MockLLMClient:
     """
     Client LLM deterministico per test unitari e dry-run locali.
-    Genera risposte JSON valide basate su hash del messaggio + seed.
-
-    Parameters
-    ----------
-    seed : int
-        Seed per la generazione deterministica delle risposte.
-    infection_rate : float
-        Probabilita' che il mock risponda con stato "I" (default 0.3).
     """
-
     def __init__(self, seed: int = 42, infection_rate: float = 0.3) -> None:
         self._seed = seed
         self._infection_rate = infection_rate
         self._call_count = 0
-        # build_from_config usa MockLLMClient per default (use_mock_llm=True).
-        # Con l'Orchestratore che dispaccia .chat() su un thread pool, questo
-        # lock e' necessario per le stesse ragioni di TokenBudget piu' sopra.
         self._lock = threading.Lock()
+        self._cache = LLMDiskCache()
 
     def chat(self, messages: list[dict]) -> LLMResponse:
         import hashlib
         import random
 
-        # Solo per telemetria (call_count property) — protetto da lock perche'
-        # piu' thread possono chiamare chat() in contemporanea.
+        msg_key = json.dumps(messages, sort_keys=True, ensure_ascii=False)
+        msg_hash = hashlib.md5(msg_key.encode("utf-8")).hexdigest()
+
+        cached_data = self._cache.get(msg_hash)
+        if cached_data:
+            return LLMResponse(
+                content=cached_data["content"],
+                input_tokens=cached_data.get("input_tokens", 0),
+                output_tokens=cached_data.get("output_tokens", 0),
+                model=cached_data.get("model", "mock"),
+                latency_s=0.0,
+                is_fallback=cached_data.get("is_fallback", False)
+            )
+
         with self._lock:
             self._call_count += 1
             n = self._call_count
 
-        # NOTA: il seed della risposta NON usa piu' self._call_count.
-        # Prima del supporto alla concorrenza, call_count era deterministicamente
-        # legato a un nodo via l'ordine dello shuffle (sequenziale); con
-        # l'esecuzione parallela, quale thread incrementa il contatore per
-        # primo dipende dallo scheduling — quindi due run con lo STESSO seed
-        # potrebbero assegnare call_count diversi allo stesso nodo, rompendo
-        # la riproducibilita' che questa classe promette.
-        # Si deriva invece il seed da un hash del contenuto dei messaggi:
-        # stessa conversazione -> stessa risposta, sempre, a prescindere da
-        # ordine o thread di esecuzione. Allinea anche l'implementazione alla
-        # docstring della classe ("basata su hash del messaggio + seed"), che
-        # la versione precedente (solo self._seed + self._call_count) non
-        # rispettava davvero.
-        msg_key = json.dumps(messages, sort_keys=True, ensure_ascii=False)
-        msg_hash = int(hashlib.md5(msg_key.encode("utf-8")).hexdigest(), 16)
-        rng = random.Random(self._seed + msg_hash)
+        msg_hash_int = int(msg_hash, 16)
+        rng = random.Random(self._seed + msg_hash_int)
 
-        # Determina stato proposto in modo deterministico
         proposed = "I" if rng.random() < self._infection_rate else "S"
         susceptibility = round(rng.uniform(0.1, 0.9), 2)
         spread = proposed == "I"
@@ -431,15 +469,14 @@ class MockLLMClient:
         convincing = "convincente" if spread else "non convincente"
         opinion_text = "La narrativa e' reale e va diffusa." if spread else "Resto scettico."
         payload = {
-            "reasoning": f"Mock reasoning #{n}: "
-                         f"Ho analizzato il feed e concludo che il tema e' {convincing}.",
+            "reasoning": f"Mock reasoning #{n}: Ho analizzato il feed e concludo che il tema e' {convincing}.",
             "opinion": f"Opinion #{n}: {opinion_text}",
             "susceptibility": susceptibility,
             "proposed_state": proposed,
             "spread_intent": spread,
         }
 
-        return LLMResponse(
+        resp = LLMResponse(
             content=json.dumps(payload),
             input_tokens=50,
             output_tokens=80,
@@ -447,6 +484,17 @@ class MockLLMClient:
             latency_s=0.001,
         )
 
+        self._cache.set(msg_hash, {
+            "content": resp.content,
+            "input_tokens": resp.input_tokens,
+            "output_tokens": resp.output_tokens,
+            "model": resp.model,
+            "is_fallback": resp.is_fallback
+        })
+
+        return resp
+
     @property
     def call_count(self) -> int:
         return self._call_count
+lf._call_count

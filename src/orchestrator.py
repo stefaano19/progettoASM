@@ -399,9 +399,19 @@ class SimulationOrchestrator:
         bottiglia indipendente da quello LLM, mascherato finora dal primo.
         """
         transitions: dict[int, tuple[str, str]] = {}
-        node_order = list(
+        all_nodes = list(
             self._nm.iter_nodes_shuffled(seed=self._cfg.execution.random_seed + step)
         )
+
+        # --- Modifica: Aggiornamento Stocastico (Campionamento Random) ---
+        activation_prob = getattr(self._cfg.simulation, "activation_probability", 1.0)
+        if activation_prob < 1.0:
+            n_active = max(1, int(len(all_nodes) * activation_prob))
+            node_order = all_nodes[:n_active]
+            logger.info("[Orchestrator] Stocastico: attivati %d nodi su %d (%.1f%%)", 
+                        n_active, len(all_nodes), activation_prob * 100)
+        else:
+            node_order = all_nodes
 
         # Snapshot unico per l'intero step (vedi nota "cambio di semantica" sopra).
         all_states = self._nm.get_all_states()
