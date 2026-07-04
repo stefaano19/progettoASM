@@ -488,7 +488,13 @@ class SimulationOrchestrator:
             )
 
         # --- 3. FINALIZE (sequenziale, stesso ordine — scritture su NetworkManager) ---
+        # Ottimizzazione: raccoglie delta embedding e post in batch, poi applica
+        # in un'unica operazione vettorizzata (evita N chiamate perturb_embedding).
         logger.info("[Orchestrator] Attendendo completamento di %d chiamate LLM...", len(futures))
+
+        batch_node_ids: list[int] = []
+        batch_deltas: list = []
+
         for node_id in node_order:
             ctx = contexts[node_id]
             if ctx is None:
@@ -500,11 +506,6 @@ class SimulationOrchestrator:
                 try:
                     response = futures[node_id].result()
                 except RuntimeError:
-                    # Token budget hard limit raggiunto in un worker thread.
-                    # Stesso contratto della versione sequenziale: propaga
-                    # subito all'Orchestratore. wait=False perche' a budget
-                    # esaurito non ha senso bloccare in attesa di risposte che
-                    # verrebbero comunque scartate.
                     executor.shutdown(wait=False, cancel_futures=True)
                     raise
                 except Exception as exc:
@@ -512,13 +513,31 @@ class SimulationOrchestrator:
                     response = None
 
             try:
-                decision = self._agents[node_id].finalize_step(ctx, response, self._nm)
+                # skip_embedding_update=True: l'orchestratore applica i delta
+                # in batch vettorizzato alla fine del loop (perturb_embeddings_batch)
+                decision = self._agents[node_id].finalize_step(
+                    ctx, response, self._nm, skip_embedding_update=True
+                )
             except Exception as exc:
                 logger.warning("[Orchestrator] Agent %d finalize error: %s", node_id, exc)
                 continue
 
             if decision.state_changed:
                 transitions[node_id] = (decision.old_state, decision.new_state)
+
+            # Accumula delta per applicazione batch (evita N chiamate separate)
+            agent = self._agents[node_id]
+            delta = agent._compute_embedding_delta(
+                decision.susceptibility, decision.new_state
+            )
+            batch_node_ids.append(node_id)
+            batch_deltas.append(delta)
+
+        # Applica tutti i delta in un'unica operazione vettorizzata
+        if batch_node_ids:
+            import numpy as _np
+            deltas_arr = _np.stack(batch_deltas, axis=0)
+            self._nm.perturb_embeddings_batch(batch_node_ids, deltas_arr)
 
         # A questo punto ogni future e' gia' stato attesto via .result(),
         # quindi questo shutdown e' immediato (non c'e' nulla da aspettare).

@@ -67,6 +67,8 @@ class GNNTrainer:
         self._lr = cfg.gnn.lr
         self._epochs = cfg.gnn.epochs_per_step
         self._train_history: list[float] = []  # loss per epoch
+        self._last_out: np.ndarray | None = None   # OPT2: cache ultimo forward output
+        self._last_out_step: int = -1              # OPT2: step associato all'ultimo output
 
         if model.uses_torch:
             self._init_torch_optimizer()
@@ -113,29 +115,37 @@ class GNNTrainer:
         step: int,
         neg_ratio: float = 1.0,
     ) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
-        """Campiona archi positivi e negativi (non archi) dal grafo."""
-        rng = random.Random(self._seed + step)
-        nodes = list(G.nodes())
+        """Campiona archi positivi e negativi. Ottimizzato: usa numpy
+        per il campionamento negativo invece del while loop con tentativi."""
+        rng = np.random.default_rng(self._seed + step)
+        nodes = np.array(list(G.nodes()), dtype=np.int32)
         pos_edges = list(G.edges())
         if not pos_edges:
             return [], []
 
-        # Limite pratico per grafi grandi
         max_pos = min(len(pos_edges), 512)
-        pos_sample = rng.sample(pos_edges, max_pos)
+        indices = rng.choice(len(pos_edges), size=max_pos, replace=False)
+        pos_sample = [pos_edges[i] for i in indices]
 
-        # Negative: coppie random non connesse
+        # Campionamento negativo vettorizzato: genera batch e filtra
         n_neg = int(max_pos * neg_ratio)
+        edge_set = set(G.edges()) | {(v, u) for u, v in G.edges()}
         neg_edges: list[tuple[int, int]] = []
-        attempts = 0
-        while len(neg_edges) < n_neg and attempts < n_neg * 10:
-            u = rng.choice(nodes)
-            v = rng.choice(nodes)
-            if u != v and not G.has_edge(u, v) and not G.has_edge(v, u):
-                neg_edges.append((u, v))
-            attempts += 1
+        batch = 512
+        while len(neg_edges) < n_neg:
+            us = rng.choice(nodes, size=batch)
+            vs = rng.choice(nodes, size=batch)
+            for u, v in zip(us.tolist(), vs.tolist()):
+                if u != v and (u, v) not in edge_set:
+                    neg_edges.append((u, v))
+                    if len(neg_edges) >= n_neg:
+                        break
+            # Safety: se non troviamo abbastanza negativi, usciamo
+            batch = min(batch * 2, 4096)
+            if batch > 4096:
+                break
 
-        return pos_sample, neg_edges
+        return pos_sample, neg_edges[:n_neg]
 
     def _train_numpy(self, G: "nx.Graph", embeddings: np.ndarray, step: int) -> float:
         """

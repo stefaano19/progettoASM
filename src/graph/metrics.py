@@ -401,29 +401,52 @@ def compute_echo_chamber_index(
     Echo Chamber Index (ECI):
     Per ogni nodo, calcola la frazione di archi che vanno verso la stessa
     community. ECI = media di questa frazione su tutti i nodi con vicini.
-    Range: [0, 1]. Valori alti indicano forte chiusura informativa.
-    Ottimizzato scorrendo gli archi invece dei vicini di ogni nodo (O(E) vs O(V * avg_deg)).
+    Ottimizzato: vettorizzato con numpy su array di edge endpoints.
     """
     if not community_map:
         return float("nan")
 
-    intra_degree = {n: 0 for n in G.nodes()}
-    
-    # Scorriamo tutti gli archi una sola volta (più veloce di G.neighbors per ogni nodo)
-    for u, v in G.edges():
-        if u not in community_map or v not in community_map:
-            continue
-        if community_map[u] == community_map[v]:
-            intra_degree[u] += 1
-            intra_degree[v] += 1
+    edges = list(G.edges())
+    if not edges:
+        return 0.0
 
-    ratios: list[float] = []
-    for node in G.nodes():
-        deg = G.degree(node)
-        if deg > 0:
-            ratios.append(intra_degree[node] / deg)
+    # Costruisci array numpy degli endpoints
+    u_arr = np.array([u for u, v in edges], dtype=np.int32)
+    v_arr = np.array([v for u, v in edges], dtype=np.int32)
 
-    return float(np.mean(ratios)) if ratios else 0.0
+    # Crea array community per tutti i nodi (assumendo nodi 0..n-1)
+    max_node = max(G.nodes()) + 1
+    comm_arr = np.zeros(max_node, dtype=np.int32)
+    for node, comm in community_map.items():
+        if node < max_node:
+            comm_arr[node] = comm
+
+    # Maschera archi intra-community
+    try:
+        same_comm = comm_arr[u_arr] == comm_arr[v_arr]
+    except IndexError:
+        # Fallback se i nodi non sono 0..n-1
+        same_comm = np.array(
+            [community_map.get(u) == community_map.get(v) for u, v in edges]
+        )
+
+    # Conta intra_degree per ogni nodo con np.bincount (molto più veloce)
+    intra_u = np.bincount(u_arr[same_comm], minlength=max_node)
+    intra_v = np.bincount(v_arr[same_comm], minlength=max_node)
+    intra_degree = intra_u + intra_v  # somma contributi entrambe le direzioni
+
+    # Grado totale per ogni nodo
+    degree_arr = np.array([G.degree(n) for n in range(max_node)])
+
+    # Calcola ratio solo per nodi nel grafo con grado > 0
+    node_arr = np.array([n for n in G.nodes() if n < max_node], dtype=np.int32)
+    degs = degree_arr[node_arr]
+    mask = degs > 0
+    if not mask.any():
+        return 0.0
+
+    ratios = intra_degree[node_arr[mask]] / degs[mask]
+    return float(ratios.mean())
 
 
 def compute_belief_polarisation(belief_states: dict[int, float]) -> float:
@@ -444,12 +467,13 @@ def compute_belief_polarisation(belief_states: dict[int, float]) -> float:
 # All-in-one snapshot
 # ---------------------------------------------------------------------------
 
-# Cache globale per metriche topologiche statiche
-_CACHE = {
+# Cache globale per metriche topologiche e community
+_CACHE: dict = {
     "num_edges": None,
     "topological_metrics": None,
     "modularity_q": None,
-    "echo_chamber_index": None
+    "echo_chamber_index": None,
+    "community_map_id": None,  # id() della community_map per rilevare ricalcoli
 }
 
 def compute_all_metrics(
@@ -462,19 +486,33 @@ def compute_all_metrics(
     """
     Calcola tutte le metriche disponibili in un unico dict.
     Adatto per logging a ogni step temporale.
-    Ottimizzato con caching: ricalcola le metriche topologiche solo se il numero di archi cambia 
-    oppure se force_topology_update è True.
+    Ottimizzato con caching a due livelli:
+      - metriche topologiche: ricalcolate solo se num_edges cambia
+      - ECI/modularity: ricalcolate solo se num_edges o community_map cambiano
     """
     global _CACHE
     m = G.number_of_edges()
+    cm_id = id(community_map) if community_map is not None else None
 
-    # Ricalcola se esplicitamente richiesto, se la cache è vuota, o se num_edges è cambiato
-    if force_topology_update or _CACHE["topological_metrics"] is None or _CACHE["num_edges"] != m:
+    topo_stale = (
+        force_topology_update
+        or _CACHE["topological_metrics"] is None
+        or _CACHE["num_edges"] != m
+    )
+    comm_stale = (
+        topo_stale
+        or _CACHE["community_map_id"] != cm_id
+        or _CACHE["modularity_q"] is None
+    )
+
+    if topo_stale:
         _CACHE["topological_metrics"] = compute_topological_metrics(G, cfg)
-        if community_map:
-            _CACHE["modularity_q"] = compute_modularity(G, community_map)
-            _CACHE["echo_chamber_index"] = compute_echo_chamber_index(G, community_map)
         _CACHE["num_edges"] = m
+
+    if comm_stale and community_map:
+        _CACHE["modularity_q"] = compute_modularity(G, community_map)
+        _CACHE["echo_chamber_index"] = compute_echo_chamber_index(G, community_map)
+        _CACHE["community_map_id"] = cm_id
 
     metrics = _CACHE["topological_metrics"].copy()
 
@@ -486,10 +524,10 @@ def compute_all_metrics(
         metrics["echo_chamber_index"] = None
 
     if belief_states:
-        values = list(belief_states.values())
-        metrics["belief_polarisation"] = compute_belief_polarisation(belief_states)
+        values = np.fromiter(belief_states.values(), dtype=np.float32, count=len(belief_states))
+        metrics["belief_polarisation"] = float(min(np.var(values) / 0.25, 1.0))
         metrics["mean_belief"] = float(np.mean(values))
-        metrics["infection_rate"] = sum(1 for v in values if v > 0.5) / len(values)
+        metrics["infection_rate"] = float(np.sum(values > 0.5)) / len(values)
     else:
         metrics["belief_polarisation"] = None
         metrics["mean_belief"] = None

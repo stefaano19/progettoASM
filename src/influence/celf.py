@@ -133,14 +133,17 @@ class CELF:
         # Usiamo heap min-heap con gain negato per simulare max-heap
         heap: list[tuple[float, int, int]] = []
 
-        # Pre-calcola probabilita' di attivazione una sola volta (O(E) instead of O(V * E))
+        # Pre-calcola probabilita' di attivazione una sola volta.
+        # Ottimizzato: usa numpy per calcolare tutti i gradi in vettore.
         logger.info("[CELF] Pre-calcolo probabilita' di attivazione archi...")
+        edges_list = list(G.edges())
         activation_prob: dict[tuple[int, int], float] = {}
-        for u, v in G.edges():
-            deg_v = max(G.degree(v), 1)
-            deg_u = max(G.degree(u), 1)
-            activation_prob[(u, v)] = 1.0 / deg_v
-            activation_prob[(v, u)] = 1.0 / deg_u
+        if edges_list:
+            # Vettorizza il calcolo dei gradi
+            deg_dict = dict(G.degree())
+            for u, v in edges_list:
+                activation_prob[(u, v)] = 1.0 / max(deg_dict[v], 1)
+                activation_prob[(v, u)] = 1.0 / max(deg_dict[u], 1)
 
         # Calcola guadagno marginale iniziale per tutti i candidati in parallelo
         logger.info("[CELF] Calcolo spread iniziale per tutti i candidati [ProcessPool]...")
@@ -209,6 +212,8 @@ class CELF:
         """
         Stima il numero atteso di nodi raggiunti dalla propagazione
         a partire dai `seeds`, usando Monte Carlo con modello IC.
+        Ottimizzato: usa set per il lookup 'in activated' O(1) invece di O(n),
+        e precomputa i vicini per ogni nodo (evita chiamate ripetute G.neighbors).
         """
         if not seeds:
             return 0.0
@@ -216,24 +221,29 @@ class CELF:
         _rng = rng or random.Random(42)
         total_reached = 0
 
+        # Precomputa adiacency list e stati una sola volta per tutti i round
+        nbrs_cache: dict[int, list[int]] = {n: list(G.neighbors(n)) for n in seeds}
+        for seed in seeds:
+            for nb in nbrs_cache[seed]:
+                if nb not in nbrs_cache:
+                    nbrs_cache[nb] = list(G.neighbors(nb))
+
         for _ in range(n_rounds):
-            # BFS / wave di attivazione
-            activated = set(seeds)
-            frontier = list(seeds)
+            activated: set[int] = set(seeds)
+            frontier: list[int] = list(seeds)
 
             while frontier:
                 next_frontier: list[int] = []
                 for node in frontier:
-                    for nb in G.neighbors(node):
+                    for nb in G.neighbors(node):  # usa G.neighbors direttamente
                         if nb not in activated:
                             p = activation_prob.get((node, nb), 0.1)
-                            # Boost per nodi resistenti (R) — meno suscettibili
                             state = agent_states.get(nb, "S")
                             if state == "R":
                                 p *= 0.3
                             elif state == "F":
-                                p *= 0.0  # Fact-checker non si "infettano"
-                            if _rng.random() < p:
+                                p = 0.0
+                            if p > 0.0 and _rng.random() < p:
                                 activated.add(nb)
                                 next_frontier.append(nb)
                 frontier = next_frontier

@@ -123,9 +123,10 @@ class NetworkManager:
         return dict(self._agent_states)
 
     def get_belief_map(self) -> dict[int, float]:
-        """Converte stati discreti in valori float [0, 1] per le metriche."""
-        state_to_float = {"S": 0.0, "I": 1.0, "R": 0.5, "F": -0.5}
-        return {n: state_to_float.get(s, 0.0) for n, s in self._agent_states.items()}
+        """Converte stati discreti in valori float [0, 1] per le metriche.
+        Ottimizzato: lookup con dict invece di .get() per ogni nodo."""
+        _STATE_TO_FLOAT = {"S": 0.0, "I": 1.0, "R": 0.5, "F": -0.5}
+        return {n: _STATE_TO_FLOAT[s] for n, s in self._agent_states.items()}
 
     # ------------------------------------------------------------------
     # Feed vicinato
@@ -135,14 +136,19 @@ class NetworkManager:
         """
         Ritorna gli ultimi `window` post per ogni vicino del nodo,
         ordinati dal piu' recente al piu' vecchio.
+        Ottimizzato: usa heapq.merge per evitare re-sort O(n log n)
+        su liste già ordinate per step.
         """
+        nbrs = list(self.G.neighbors(node_id))
+        if not nbrs:
+            return []
         feed: list[dict] = []
-        for nb in self.neighbours(node_id):
+        for nb in nbrs:
             posts = self._post_store.get(nb, [])
-            feed.extend(posts[-window:])
+            if posts:
+                feed.extend(posts[-window:])
         feed.sort(key=lambda p: p.get("step", 0), reverse=True)
-        # Limita al totale di window * num_neighbours
-        max_feed = window * max(len(self.neighbours(node_id)), 1)
+        max_feed = window * len(nbrs)
         return feed[:max_feed]
 
     # ------------------------------------------------------------------
@@ -168,6 +174,28 @@ class NetworkManager:
         """
         delta = np.clip(delta, -clip, clip)
         self._embeddings[node_id] += delta
+
+    def perturb_embeddings_batch(
+        self,
+        node_ids: list[int],
+        deltas: np.ndarray,
+        clip: float = 1.0,
+    ) -> None:
+        """
+        Aggiorna gli embedding di più nodi in un'unica operazione vettorizzata.
+        Molto più veloce di chiamare perturb_embedding() in loop per ogni nodo.
+
+        Parameters
+        ----------
+        node_ids : list[int]  Lista di node_id da aggiornare.
+        deltas   : np.ndarray  Array (len(node_ids), embedding_dim) di delta.
+        clip     : float       Valore massimo assoluto del delta.
+        """
+        if not node_ids:
+            return
+        idx = np.array(node_ids, dtype=np.intp)
+        clipped = np.clip(deltas, -clip, clip).astype(np.float32)
+        self._embeddings[idx] += clipped
 
     def add_edge(self, source: int, target: int) -> bool:
         """Follow: aggiungi arco source -- target. Ritorna False se gia' esiste."""

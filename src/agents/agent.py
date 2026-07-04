@@ -339,6 +339,7 @@ class Agent:
         ctx: AgentStepContext,
         response: "LLMResponse | None",
         network_manager: "NetworkManager",
+        skip_embedding_update: bool = False,
     ) -> AgentDecision:
         """
         Parsing, transizione di stato, scrittura su NetworkManager — a
@@ -348,6 +349,12 @@ class Agent:
         ordine usato per prepare_step(), per evitare scritture concorrenti
         su NetworkManager (add_post, perturb_embedding, set_state non sono
         garantite thread-safe e qui assumiamo non lo siano).
+
+        Parameters
+        ----------
+        skip_embedding_update : bool
+            Se True, salta la chiamata a perturb_embedding (l'orchestratore
+            la gestisce in batch con perturb_embeddings_batch). Default False.
         """
         old_state = ctx.old_state
         current_step = ctx.current_step
@@ -399,9 +406,10 @@ class Agent:
                 "author_state": old_state,
             })
 
-        # 6. Perturbazione embedding
+        # 6. Perturbazione embedding (saltata se l'orchestratore la fa in batch)
         delta = self._compute_embedding_delta(susc, new_state_enum.value)
-        network_manager.perturb_embedding(self.node_id, delta)
+        if not skip_embedding_update:
+            network_manager.perturb_embedding(self.node_id, delta)
         delta_norm = float(np.linalg.norm(delta))
 
         # 7. Aggiorna stato nel NetworkManager e nell'agente
