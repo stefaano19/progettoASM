@@ -351,6 +351,31 @@ class SimulationOrchestrator:
                 meta={"run_id": self._log._run_id if hasattr(self._log, "_run_id") else ""},
             )
 
+        # 6. EXPORT METRICS TO CSV (Append)
+        import csv
+        import os
+        
+        csv_dir = self._cfg.project_root / self._cfg.paths.results
+        os.makedirs(csv_dir, exist_ok=True)
+        csv_path = csv_dir / "metrics_history.csv"
+        file_exists = os.path.isfile(csv_path)
+        
+        with open(csv_path, mode="a", newline="") as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(["step", "S", "I", "R", "F", "ECI", "Loss", "Edges"])
+            
+            writer.writerow([
+                step,
+                state_counts.get("S", 0),
+                state_counts.get("I", 0),
+                state_counts.get("R", 0),
+                state_counts.get("F", 0),
+                round(metrics.get("echo_chamber_index") or 0.0, 4),
+                round(gnn_loss, 4),
+                self._nm.num_edges
+            ])
+
         return metrics
 
     # ------------------------------------------------------------------
