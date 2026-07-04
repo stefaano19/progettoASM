@@ -93,6 +93,7 @@ class SimulationOrchestrator:
         sim_logger,
         community_map: dict[int, int],
         patient_zero_ids: list[int],
+        resume_step: int = 0,
     ) -> None:
         self._cfg = cfg
         self._nm = network_manager
@@ -105,7 +106,8 @@ class SimulationOrchestrator:
         self._log = sim_logger
         self._community_map = community_map
         self._patient_zero_ids = patient_zero_ids
-        self._current_step = 0
+        self._current_step = resume_step
+        self._resume_step = resume_step
         self._checkpoint_every = cfg.simulation.checkpoint_every
 
     # ------------------------------------------------------------------
@@ -218,13 +220,20 @@ class SimulationOrchestrator:
         ckpt_manager = CheckpointManager(cfg)
 
         # --- Resume ---
+        resume_step = 0
         if resume and ckpt_manager.has_checkpoint():
             ckpt_data = ckpt_manager.load_latest()
             nm = ckpt_manager.restore_network_manager(ckpt_data)
             if ckpt_data.gnn_weights:
                 gnn_model.set_weights(ckpt_data.gnn_weights)
             patient_zero_ids = ckpt_data.patient_zero_ids
-            logger.info("[Orchestrator] Resume dal step %d.", ckpt_data.step)
+            # Riprendiamo dal passo SUCCESSIVO a quello salvato
+            resume_step = ckpt_data.step + 1
+            logger.info(
+                "[Orchestrator] Resume dal step %d (ultimo checkpoint: step %d).",
+                resume_step,
+                ckpt_data.step,
+            )
 
         sim_logger.log_run_start(
             config_hash=cfg.config_hash,
@@ -235,6 +244,7 @@ class SimulationOrchestrator:
                 "patient_zeros": patient_zero_ids,
                 "n_nodes": nm.num_nodes,
                 "n_edges": nm.num_edges,
+                "resume_step": resume_step,
             },
         )
 
@@ -250,6 +260,7 @@ class SimulationOrchestrator:
             sim_logger=sim_logger,
             community_map=community_map,
             patient_zero_ids=patient_zero_ids,
+            resume_step=resume_step,
         )
         return orch
 
@@ -559,6 +570,11 @@ class SimulationOrchestrator:
     @property
     def current_step(self) -> int:
         return self._current_step
+
+    @property
+    def resume_step(self) -> int:
+        """Step da cui riprendere (0 se nuova run, ckpt_step+1 se resume)."""
+        return self._resume_step
 
     @property
     def network_manager(self):
