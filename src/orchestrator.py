@@ -452,9 +452,8 @@ class SimulationOrchestrator:
             )
 
         # --- 3. FINALIZE (sequenziale, stesso ordine — scritture su NetworkManager) ---
-        import tqdm
         logger.info("[Orchestrator] Attendendo completamento di %d chiamate LLM...", len(futures))
-        for node_id in tqdm.tqdm(node_order, desc=f"LLM Step {step}", total=len(node_order), unit="node"):
+        for node_id in node_order:
             ctx = contexts[node_id]
             if ctx is None:
                 continue
