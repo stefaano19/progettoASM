@@ -110,6 +110,25 @@ class SimulationOrchestrator:
         self._resume_step = resume_step
         self._checkpoint_every = cfg.simulation.checkpoint_every
 
+        # --- CSV metriche: aperto UNA SOLA VOLTA, tenuto aperto per tutta la run ---
+        # Apriamo in append mode: se il file esiste gia' (importato dalla sessione
+        # precedente su Kaggle) i nuovi step vengono accodati automaticamente.
+        import csv
+        import os
+        csv_dir = cfg.project_root / cfg.paths.results
+        os.makedirs(csv_dir, exist_ok=True)
+        csv_path = csv_dir / "metrics_history.csv"
+        file_exists = csv_path.is_file() and csv_path.stat().st_size > 0
+        self._csv_file = open(csv_path, mode="a", newline="", encoding="utf-8")
+        self._csv_writer = csv.writer(self._csv_file)
+        if not file_exists:
+            self._csv_writer.writerow(
+                ["step", "S", "I", "R", "F", "ECI", "modularity_q",
+                 "gnn_loss", "edges", "transitions", "edges_added", "edges_removed"]
+            )
+            self._csv_file.flush()
+        logger.debug("[Orchestrator] CSV metriche: %s (append=%s)", csv_path, file_exists)
+
     # ------------------------------------------------------------------
     # Factory
     # ------------------------------------------------------------------
@@ -362,30 +381,22 @@ class SimulationOrchestrator:
                 meta={"run_id": self._log._run_id if hasattr(self._log, "_run_id") else ""},
             )
 
-        # 6. EXPORT METRICS TO CSV (Append)
-        import csv
-        import os
-        
-        csv_dir = self._cfg.project_root / self._cfg.paths.results
-        os.makedirs(csv_dir, exist_ok=True)
-        csv_path = csv_dir / "metrics_history.csv"
-        file_exists = os.path.isfile(csv_path)
-        
-        with open(csv_path, mode="a", newline="") as f:
-            writer = csv.writer(f)
-            if not file_exists:
-                writer.writerow(["step", "S", "I", "R", "F", "ECI", "Loss", "Edges"])
-            
-            writer.writerow([
-                step,
-                state_counts.get("S", 0),
-                state_counts.get("I", 0),
-                state_counts.get("R", 0),
-                state_counts.get("F", 0),
-                round(metrics.get("echo_chamber_index") or 0.0, 4),
-                round(gnn_loss, 4),
-                self._nm.num_edges
-            ])
+        # 6. SCRIVI RIGA CSV (file gia' aperto in __init__)
+        self._csv_writer.writerow([
+            step,
+            state_counts.get("S", 0),
+            state_counts.get("I", 0),
+            state_counts.get("R", 0),
+            state_counts.get("F", 0),
+            round(metrics.get("echo_chamber_index") or 0.0, 4),
+            round(metrics.get("modularity_q") or 0.0, 4),
+            round(gnn_loss, 4),
+            self._nm.num_edges,
+            n_changed,
+            n_added,
+            n_removed,
+        ])
+        self._csv_file.flush()  # flush immediato: leggibile anche se la sessione crasha
 
         return metrics
 
@@ -603,3 +614,20 @@ class SimulationOrchestrator:
     def state_summary(self) -> dict[str, int]:
         from src.agents.state_machine import StateMachine
         return StateMachine.count_states(self._nm.get_all_states())
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
+    def close(self) -> None:
+        """Chiude il file CSV delle metriche in modo pulito."""
+        try:
+            if hasattr(self, "_csv_file") and self._csv_file and not self._csv_file.closed:
+                self._csv_file.flush()
+                self._csv_file.close()
+                logger.debug("[Orchestrator] CSV metriche chiuso.")
+        except Exception:
+            pass
+
+    def __del__(self) -> None:
+        self.close()
