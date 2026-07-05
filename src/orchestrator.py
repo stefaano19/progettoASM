@@ -380,6 +380,7 @@ class SimulationOrchestrator:
                 patient_zero_ids=self._patient_zero_ids,
                 meta={"run_id": self._log._run_id if hasattr(self._log, "_run_id") else ""},
             )
+            self._export_to_kaggle_working(step)
 
         # 6. SCRIVI RIGA CSV (file gia' aperto in __init__)
         self._csv_writer.writerow([
@@ -398,7 +399,42 @@ class SimulationOrchestrator:
         ])
         self._csv_file.flush()  # flush immediato: leggibile anche se la sessione crasha
 
+        # Se non c'è stato checkpoint, possiamo comunque voler esportare il csv aggiornato
+        if step % self._checkpoint_every != 0:
+            self._export_to_kaggle_working(step, only_csv=True)
+
         return metrics
+
+    def _export_to_kaggle_working(self, step: int, only_csv: bool = False) -> None:
+        """
+        Kaggle conserva solo i file in /kaggle/working/ tra le versioni.
+        Se siamo su Kaggle, copiamo il checkpoint appena creato e il CSV
+        aggiornato in /kaggle/working/. Cosi', se la run crasha, 
+        abbiamo comunque i dati salvati.
+        """
+        import os
+        import shutil
+        from pathlib import Path
+        
+        kaggle_dir = Path("/kaggle/working")
+        if not kaggle_dir.exists():
+            return
+            
+        try:
+            if not only_csv:
+                # Copia il checkpoint
+                ckpt_name = f"ckpt_step_{step:04d}.pkl"
+                ckpt_src = self._cfg.project_root / self._cfg.paths.checkpoints / ckpt_name
+                if ckpt_src.exists():
+                    shutil.copy2(ckpt_src, kaggle_dir / ckpt_name)
+                    
+            # Copia il CSV
+            csv_src = self._cfg.project_root / self._cfg.paths.results / "metrics_history.csv"
+            if csv_src.exists():
+                shutil.copy2(csv_src, kaggle_dir / "metrics_history.csv")
+                
+        except Exception as e:
+            logger.warning("[Orchestrator] Errore durante export su Kaggle: %s", e)
 
     # ------------------------------------------------------------------
     # Sub-cycles
