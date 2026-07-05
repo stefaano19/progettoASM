@@ -539,6 +539,9 @@ class SimulationOrchestrator:
         # in un'unica operazione vettorizzata (evita N chiamate perturb_embedding).
         logger.info("[Orchestrator] Attendendo completamento di %d chiamate LLM...", len(futures))
 
+        import random
+        nodes_to_log_response = set(random.sample(node_order, min(2, len(node_order)))) if node_order else set()
+
         batch_node_ids: list[int] = []
         batch_deltas: list = []
 
@@ -558,6 +561,9 @@ class SimulationOrchestrator:
                 except Exception as exc:
                     logger.warning("[Orchestrator] Agent %d LLM error: %s", node_id, exc)
                     response = None
+
+            if response is not None and node_id in nodes_to_log_response:
+                logger.info("[Orchestrator] [LLM Response Example] Agent %d: %s", node_id, response.content)
 
             try:
                 # skip_embedding_update=True: l'orchestratore applica i delta

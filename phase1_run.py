@@ -173,6 +173,8 @@ def main(args: argparse.Namespace) -> None:
             # Ordine randomizzato degli agenti (async update)
             node_order = list(nm.iter_nodes_shuffled(seed=cfg.execution.random_seed + step))
             transitions: dict[int, tuple[str, str]] = {}
+            
+            nodes_to_log_response = set(random.sample(node_order, min(2, len(node_order)))) if node_order else set()
 
             for node_id in node_order:
                 try:
@@ -180,6 +182,10 @@ def main(args: argparse.Namespace) -> None:
                 except RuntimeError as e:
                     logger.error("Token budget esaurito: %s", e)
                     break
+                
+                if node_id in nodes_to_log_response:
+                    logger.info("[LLM Response Example] Agent %d: proposed_state=%s, susc=%.2f, opinion='%s', reasoning='%s'", 
+                                node_id, decision.new_state, decision.susceptibility, decision.opinion, decision.reasoning)
 
                 if decision.state_changed:
                     transitions[node_id] = (decision.old_state, decision.new_state)
