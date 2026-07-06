@@ -371,18 +371,7 @@ class SimulationOrchestrator:
             gnn_loss,
         )
 
-        # 5. CHECKPOINT
-        if step % self._checkpoint_every == 0:
-            self._ckpt.save(
-                step=step,
-                network_manager=self._nm,
-                gnn_weights=self._model.get_weights(),
-                patient_zero_ids=self._patient_zero_ids,
-                meta={"run_id": self._log._run_id if hasattr(self._log, "_run_id") else ""},
-            )
-            self._export_to_kaggle_working(step)
-
-        # 6. SCRIVI RIGA CSV (file gia' aperto in __init__)
+        # 5. SCRIVI RIGA CSV (file gia' aperto in __init__)
         self._csv_writer.writerow([
             step,
             state_counts.get("S", 0),
@@ -399,8 +388,18 @@ class SimulationOrchestrator:
         ])
         self._csv_file.flush()  # flush immediato: leggibile anche se la sessione crasha
 
-        # Se non c'è stato checkpoint, possiamo comunque voler esportare il csv aggiornato
-        if step % self._checkpoint_every != 0:
+        # 6. CHECKPOINT ED ESPORTAZIONE SU KAGGLE
+        if step % self._checkpoint_every == 0:
+            self._ckpt.save(
+                step=step,
+                network_manager=self._nm,
+                gnn_weights=self._model.get_weights(),
+                patient_zero_ids=self._patient_zero_ids,
+                meta={"run_id": self._log._run_id if hasattr(self._log, "_run_id") else ""},
+            )
+            self._export_to_kaggle_working(step)
+        else:
+            # Se non c'è stato checkpoint, possiamo comunque voler esportare il csv aggiornato
             self._export_to_kaggle_working(step, only_csv=True)
 
         return metrics
