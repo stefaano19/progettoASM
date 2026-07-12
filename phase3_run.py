@@ -152,6 +152,7 @@ def main(args: argparse.Namespace) -> None:
     # 5. Step post-intervento
     # -------------------------------------------------------
     logger.info("\n[5/5] Esecuzione %d step post-intervento...", n_post_steps)
+    orch._phase = "3"  # Marca i prossimi step come Fase 3 nel CSV
     start_step = orch.current_step + 1
     post_metrics = orch.run(n_steps=n_post_steps, start_step=start_step)
 

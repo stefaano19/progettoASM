@@ -78,6 +78,7 @@ class SubgraphConfig:
     target_nodes: int = 1000
     min_component: int = 200
     seed_strategy: str = "high_degree"
+    forward_prob: float = 0.5
     output_file: str = "data/processed/subgraph.gpickle"
 
 
@@ -289,6 +290,7 @@ def _load_llm_config(raw: dict) -> LLMConfig:
     """Parser specifico per la sezione llm con sotto-dict annidate."""
     return LLMConfig(
         backend=raw.get("backend", "api"),
+        max_concurrent_requests=raw.get("max_concurrent_requests", 30),
         api=_nested_to_dataclass(raw.get("api", {}), LLMApiConfig),
         local=_nested_to_dataclass(raw.get("local", {}), LLMLocalConfig),
         token_budget=_nested_to_dataclass(raw.get("token_budget", {}), LLMTokenBudget),

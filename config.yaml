@@ -35,10 +35,11 @@ dataset:
 # Subgraph Extraction
 # ---------------------------------------------------------------------------
 subgraph:
-  strategy:       "bfs_seed"       # "bfs_seed" | "random_walk" | "random_nodes"
-  target_nodes:   30000           # nodi nel sottografo: > 235k per prendere tutto l'LCC
+  strategy:       "forest_fire"    # "bfs_seed" | "random_walk" | "random_nodes" | "forest_fire"
+  target_nodes:   5000            # nodi nel sottografo: > 235k per prendere tutto l'LCC
   min_component:  200              # scarta componenti connesse con meno di N nodi
   seed_strategy:  "high_degree"    # nodo di partenza BFS: "high_degree" | "random"
+  forward_prob:   0.5              # Forest Fire: probabilita' propagazione (0.4-0.7)
   output_file:    "data/processed/subgraph.gpickle"
 
 # ---------------------------------------------------------------------------

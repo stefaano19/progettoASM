@@ -7,6 +7,7 @@ Strategie disponibili (config.subgraph.strategy):
   - "bfs_seed"      : BFS a partire da un nodo ad alto grado (default)
   - "random_walk"   : random walk con restart
   - "random_nodes"  : campionamento puramente casuale di nodi + archi indotti
+  - "forest_fire"   : Forest Fire Sampling (Leskovec & Faloutsos, KDD 2006)
 
 Il sottografo viene salvato come .gpickle e le feature vengono allineate.
 
@@ -102,6 +103,14 @@ def extract_subgraph(
         selected_nodes = _random_walk_sample(G_lcc, target_n, seed, seed_strategy)
     elif strategy == "random_nodes":
         selected_nodes = _random_nodes_sample(G_lcc, target_n, seed)
+    elif strategy == "forest_fire":
+        forward_prob = getattr(cfg.subgraph, 'forward_prob', 0.5)
+        selected_nodes = _forest_fire_sample(
+            G_lcc, target_n, seed, seed_strategy, forward_prob=forward_prob,
+        )
+        logger.info(
+            "[Extractor] Forest Fire: forward_prob=%.2f", forward_prob,
+        )
     else:
         raise ValueError(f"Strategia di campionamento non valida: '{strategy}'")
 
@@ -244,3 +253,84 @@ def _random_nodes_sample(G: nx.Graph, target_n: int, seed: int) -> list[int]:
     sampled = rng.sample(nodes, min(target_n, len(nodes)))
     logger.debug("[Extractor] Random sample: %d nodi", len(sampled))
     return sampled
+
+
+def _forest_fire_sample(
+    G: nx.Graph,
+    target_n: int,
+    seed: int,
+    seed_strategy: str,
+    forward_prob: float = 0.5,
+) -> list[int]:
+    """
+    Forest Fire Sampling (Leskovec & Faloutsos, KDD 2006).
+
+    Preserva meglio le proprieta' strutturali del grafo rispetto a BFS
+    e random walk: distribuzione dei gradi, coefficiente di clustering,
+    struttura delle comunita' e densita' locale.
+
+    Algoritmo:
+      1. Scegli un nodo seme (ambassador).
+      2. Genera x ~ Geometric(1 - forward_prob) — numero di vicini da "bruciare".
+      3. Seleziona x vicini non visitati a caso e aggiungili alla frontiera.
+      4. Per ogni vicino bruciato, ripeti ricorsivamente (con stack, non ricorsione).
+      5. Se la frontiera si esaurisce, ricomincia da un nuovo nodo random.
+
+    Parameters
+    ----------
+    G : nx.Graph
+        Grafo sorgente (deve essere connesso).
+    target_n : int
+        Numero target di nodi.
+    seed : int
+        Seed per riproducibilita'.
+    seed_strategy : str
+        Strategia per il nodo seme iniziale.
+    forward_prob : float
+        Probabilita' di propagazione del fuoco. Valori tipici: 0.4-0.7.
+        Valori piu' alti producono sottografi piu' densi (simili a BFS).
+        Valori piu' bassi producono campioni piu' sparsi e diversificati.
+    """
+    import random
+    rng = random.Random(seed)
+    np_rng = np.random.default_rng(seed)
+
+    start = _get_seed_node(G, seed_strategy, seed)
+    visited: set[int] = {start}
+    stack: list[int] = [start]
+
+    while len(visited) < target_n:
+        if not stack:
+            # Fuoco spento: ricomincia da un nodo random non visitato
+            remaining = list(set(G.nodes()) - visited)
+            if not remaining:
+                break
+            new_start = rng.choice(remaining)
+            visited.add(new_start)
+            stack.append(new_start)
+            continue
+
+        node = stack.pop()
+        neighbours = [nb for nb in G.neighbors(node) if nb not in visited]
+        if not neighbours:
+            continue
+
+        # Geometrica: quanti vicini "bruciare"
+        n_burn = min(
+            int(np_rng.geometric(1.0 - forward_prob)),
+            len(neighbours),
+        )
+        n_burn = max(1, n_burn)  # Brucia almeno 1 vicino
+
+        burned = rng.sample(neighbours, n_burn)
+        for nb in burned:
+            if len(visited) >= target_n:
+                break
+            visited.add(nb)
+            stack.append(nb)
+
+    logger.debug(
+        "[Extractor] Forest Fire campionati %d nodi (target=%d, p=%.2f)",
+        len(visited), target_n, forward_prob,
+    )
+    return list(visited)

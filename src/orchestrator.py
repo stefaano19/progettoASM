@@ -109,6 +109,7 @@ class SimulationOrchestrator:
         self._current_step = resume_step
         self._resume_step = resume_step
         self._checkpoint_every = cfg.simulation.checkpoint_every
+        self._phase = "2"  # Default: Fase 2 (co-evoluzione)
 
         # --- CSV metriche: aperto UNA SOLA VOLTA, tenuto aperto per tutta la run ---
         # Apriamo in append mode: se il file esiste gia' (importato dalla sessione
@@ -124,7 +125,7 @@ class SimulationOrchestrator:
         if not file_exists:
             self._csv_writer.writerow(
                 ["step", "S", "I", "R", "F", "ECI", "modularity_q",
-                 "gnn_loss", "edges", "transitions", "edges_added", "edges_removed"]
+                 "gnn_loss", "edges", "transitions", "edges_added", "edges_removed", "phase"]
             )
             self._csv_file.flush()
         logger.debug("[Orchestrator] CSV metriche: %s (append=%s)", csv_path, file_exists)
@@ -385,6 +386,7 @@ class SimulationOrchestrator:
             n_changed,
             n_added,
             n_removed,
+            self._phase,
         ])
         self._csv_file.flush()  # flush immediato: leggibile anche se la sessione crasha
 
