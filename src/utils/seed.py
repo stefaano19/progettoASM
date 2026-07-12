@@ -34,7 +34,17 @@ def set_all_seeds(seed: int = 42) -> None:
     """
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
-    np.random.seed(seed)
+    try:
+        np.random.seed(seed)
+    except ValueError:
+        # NumPy binary incompatibility (e.g. dtype size mismatch on Kaggle)
+        # Fall back to modern Generator API — non setta lo stato globale legacy
+        # ma garantisce che il codice prosegua senza crash.
+        logger.warning(
+            "[Seed] np.random.seed() fallito (binary incompatibility). "
+            "Uso np.random.default_rng() come fallback."
+        )
+        np.random.default_rng(seed)
 
     # PyTorch (opzionale — non installato in Fase 0)
     try:
