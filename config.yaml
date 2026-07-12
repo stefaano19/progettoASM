@@ -70,10 +70,10 @@ simulation:
     The spread of polarizing narratives within academic collaboration networks,
     where researchers selectively engage only with like-minded peers, forming
     self-reinforcing information bubbles that reduce cross-community knowledge.
-  initial_infection_rate: 0.05    # % nodi inizialmente in stato I (pazienti zero)
-  activation_probability: 0.3     # % di nodi attivati ad ogni step (Stochastic Updating)
+  initial_infection_rate: 0.15    # % nodi inizialmente in stato I (pazienti zero)
+  activation_probability: 0.7     # % di nodi attivati ad ogni step (Stochastic Updating)
   memory_window:          3        # sliding window: ultimi N post dei vicini
-  rewiring_cooldown:      9        # step di cooldown tra rewiring consecutivi
+  rewiring_cooldown:      2        # step di cooldown tra rewiring consecutivi
   checkpoint_every:       1       # salva checkpoint ogni N step
   seeder_strategy:        "combined" # strategia selezione pazienti zero
 
