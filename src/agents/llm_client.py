@@ -301,7 +301,8 @@ class _OpenAICompatibleBackend:
             messages=messages,  # type: ignore[arg-type]
             temperature=self._temperature,
             max_tokens=self._max_tokens,
-            timeout=None, 
+            timeout=None,
+            response_format={"type": "json_object"},
         )
         latency = time.perf_counter() - t0
         choice = resp.choices[0]
@@ -379,6 +380,13 @@ class LLMClient:
                 response = self._backend.chat(messages)
                 TokenBudget.record(response.input_tokens, response.output_tokens)
                 
+                # BUG FIX: Validiamo il JSON PRIMA di salvare in cache.
+                # Se vLLM restituisce testo non-JSON valido, generiamo eccezione
+                # per innescare il retry invece di salvare immondizia nella cache!
+                _, is_fallback_parse = extract_json(response.content)
+                if is_fallback_parse:
+                    raise ValueError(f"vLLM output is not valid JSON: {response.content[:100]}")
+                
                 self._cache.set(msg_hash, {
                     "content": response.content,
                     "input_tokens": response.input_tokens,
@@ -408,13 +416,8 @@ class LLMClient:
             content=json.dumps(FALLBACK_AGENT_OUTPUT),
             is_fallback=True,
         )
-        self._cache.set(msg_hash, {
-            "content": fallback_resp.content,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "model": "fallback",
-            "is_fallback": True
-        })
+        # BUG FIX: NON salvare mai il fallback nella cache su disco! 
+        # Altrimenti il nodo leggerà per sempre un errore al posto di chiamare l'API.
         return fallback_resp
 
     @staticmethod
