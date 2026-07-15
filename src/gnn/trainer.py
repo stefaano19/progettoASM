@@ -123,7 +123,7 @@ class GNNTrainer:
         if not pos_edges:
             return [], []
 
-        max_pos = min(len(pos_edges), 512)
+        max_pos = min(len(pos_edges), 8192)
         indices = rng.choice(len(pos_edges), size=max_pos, replace=False)
         pos_sample = [pos_edges[i] for i in indices]
 
@@ -131,7 +131,7 @@ class GNNTrainer:
         n_neg = int(max_pos * neg_ratio)
         edge_set = set(G.edges()) | {(v, u) for u, v in G.edges()}
         neg_edges: list[tuple[int, int]] = []
-        batch = 512
+        batch = 8192
         while len(neg_edges) < n_neg:
             us = rng.choice(nodes, size=batch)
             vs = rng.choice(nodes, size=batch)
@@ -141,8 +141,8 @@ class GNNTrainer:
                     if len(neg_edges) >= n_neg:
                         break
             # Safety: se non troviamo abbastanza negativi, usciamo
-            batch = min(batch * 2, 4096)
-            if batch > 4096:
+            batch = min(batch * 2, 16384)
+            if batch > 32768:
                 break
 
         return pos_sample, neg_edges[:n_neg]

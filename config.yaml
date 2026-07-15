@@ -110,11 +110,11 @@ gnn:
   num_layers:         2
   dropout:            0.3
   lr:                 0.001
-  epochs_per_step:    5              # fine-tuning step ad ogni tick temporale
+  epochs_per_step:    15             # fine-tuning step ad ogni tick temporale
   embedding_dim:      128
-  rewire_threshold_add:    0.8       # score > soglia -> aggiungi arco
-  rewire_threshold_remove: 0.2       # score < soglia -> rimuovi arco
-  max_new_edges_per_step:  999999
+  rewire_threshold_add:    0.65      # score > soglia -> aggiungi arco
+  rewire_threshold_remove: 0.35      # score < soglia -> rimuovi arco
+  max_new_edges_per_step:  200
   embedding_file:     "data/processed/embeddings.npy"
   use_torch:          true           # true = PyTorch (Kaggle/GPU), false = NumPy (locale)
 
