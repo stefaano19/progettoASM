@@ -373,6 +373,12 @@ class SimulationOrchestrator:
         )
 
         # 5. SCRIVI RIGA CSV (file gia' aperto in __init__)
+        if getattr(self, "_csv_file", None) is None or self._csv_file.closed:
+            import csv
+            csv_path = self._cfg.project_root / self._cfg.paths.results / "metrics_history.csv"
+            self._csv_file = open(csv_path, mode="a", newline="", encoding="utf-8")
+            self._csv_writer = csv.writer(self._csv_file)
+
         self._csv_writer.writerow([
             step,
             state_counts.get("S", 0),
