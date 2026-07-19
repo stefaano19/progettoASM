@@ -122,7 +122,7 @@ gnn:
 # Influence Maximization / CELF  (Fase 3)
 # ---------------------------------------------------------------------------
 influence:
-  budget_k:           10             # numero seed fact-checker da iniettare
+  budget_k:           20             # numero seed fact-checker da iniettare
   simulation_rounds:  30            # Monte Carlo per stima spread
   activation_threshold: 0.4         # soglia infection_rate per attivare CELF
   celf_interval:      15             # ogni quanti step riesegui CELF
