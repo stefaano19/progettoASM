@@ -22,7 +22,7 @@ import argparse
 import sys
 from pathlib import Path
 
-# Assicura che src/ sia nel path (compatibile con Kaggle)
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
