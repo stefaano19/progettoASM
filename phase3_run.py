@@ -123,7 +123,7 @@ def main(args: argparse.Namespace) -> None:
 
         celf = CELF(cfg)
         celf_seeds = celf.select(
-            G=nm.G,
+            graph=nm.G,
             budget_k=budget_k,
             agent_states=nm.get_all_states(),
         )
