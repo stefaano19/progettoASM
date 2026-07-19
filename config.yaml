@@ -1,5 +1,5 @@
 # =============================================================================
-# config.yaml — Echo Chamber Co-Evolution Framework
+# config.yaml — Analisi e Simulazione: La co-evoluzione di un sistema agentico in una rete sociale
 # Unica fonte di verita' per tutti i parametri di runtime.
 # Modifica SOLO questa sezione per switchare tra locale e Kaggle.
 # =============================================================================
@@ -49,7 +49,7 @@ metrics:
   compute_betweenness: false       # costoso su grafi grandi; true solo su sottografo
   betweenness_sample:  500         # nodi campionati per stima betweenness
   compute_diameter:    false       # O(n^2) — disabilitato per default
-  pagerank_alpha:      0.85
+  pagerank_alpha:      0.85        # damping factor PageRank
   katz_alpha:          0.01
 
 # ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ simulation:
     where researchers selectively engage only with like-minded peers, forming
     self-reinforcing information bubbles that reduce cross-community knowledge.
   initial_infection_rate: 0.15    # % nodi inizialmente in stato I (pazienti zero)
-  activation_probability: 0.7     # % di nodi attivati ad ogni step (Stochastic Updating)
+  activation_probability: 0.7     # % di nodi attivati ad ogni step 
   memory_window:          3        # sliding window: ultimi N post dei vicini
   rewiring_cooldown:      2        # step di cooldown tra rewiring consecutivi
   checkpoint_every:       1       # salva checkpoint ogni N step

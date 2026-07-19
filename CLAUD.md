@@ -1,5 +1,5 @@
 # CLAUD.md — Bussola Tecnico-Scientifica
-## Echo Chamber Co-Evolution Framework
+## Analisi e Simulazione: La co-evoluzione di un sistema agentico in una rete sociale
 
 > **Tipo:** Documento interno di riferimento tecnico
 > **Aggiornamento:** Mantenere aggiornato ad ogni milestone completata

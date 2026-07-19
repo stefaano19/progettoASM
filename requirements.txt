@@ -1,4 +1,4 @@
-# Echo Chamber Co-Evolution Framework — Dependencies
+# Analisi e Simulazione: La co-evoluzione di un sistema agentico in una rete sociale — Dependencies
 # =====================================================
 # Compatibile con: Mac/CPU (locale) e Kaggle Runtime (CUDA).
 # PyTorch Geometric richiede installazione separata (vedi NOTE sotto).
