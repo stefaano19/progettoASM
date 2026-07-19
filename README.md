@@ -1,4 +1,4 @@
-# Echo Chamber Co-Evolution Framework
+# Analisi e Simulazione: La co-evoluzione di un sistema agentico in una rete sociale
 ### GNN-Driven Link Prediction × LLM Generative Agents × Influence Maximization
 
 > **Corso:** Analisi di Social Network e Media
