@@ -314,10 +314,10 @@ Ogni test usa il sottografo ridotto (N <= 100 nodi) e un mock LLM per azzerare c
 
 | Fase | Titolo | Stato | Data completamento |
 |------|--------|--------|-------------------|
-| **0** | Setup & Baseline | ✅ Completata | 2026-06-28 |
-| **1** | Logica Agente (Infezione) | ✅ Completata | 2026-06-28 |
-| **2** | Dinamiche di Rete (Co-evoluzione) | ✅ Completata | 2026-06-29 |
-| **3** | Deployment & Fact-Checking | ✅ Completata | 2026-06-29 |
+| **0** | Setup & Baseline | [Done] Completata | 2026-06-28 |
+| **1** | Logica Agente (Infezione) | [Done] Completata | 2026-06-28 |
+| **2** | Dinamiche di Rete (Co-evoluzione) | [Done] Completata | 2026-06-29 |
+| **3** | Deployment & Fact-Checking | [Done] Completata | 2026-06-29 |
 
 **Fase corrente:** Tutte le fasi completate — pipeline pronta
 **Ultimo aggiornamento:** 2026-06-29

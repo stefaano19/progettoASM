@@ -153,7 +153,7 @@ class TokenBudget:
             )
         if hit_warn:
             logger.warning(
-                "[TokenBudget] ⚠  %d token totali consumati (warn_at=%d).",
+                "[TokenBudget] [Warning]  %d token totali consumati (warn_at=%d).",
                 total, cls._warn_at,
             )
 
