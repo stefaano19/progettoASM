@@ -88,8 +88,8 @@ class CELF:
         target_seed_count = budget_k if budget_k is not None else self._cfg.influence.budget_k
         current_states = agent_states or {}
 
-        # Candidates: exclude already infected nodes or existing fact-checkers
-        excluded_states = {"I", seed_state}
+        # Candidates: exclude already infected, resistant nodes, or existing fact-checkers
+        excluded_states = {"I", "R", seed_state}
         candidates = [
             node_id for node_id in graph.nodes()
             if current_states.get(node_id, "S") not in excluded_states
