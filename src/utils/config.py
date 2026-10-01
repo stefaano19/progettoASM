@@ -109,6 +109,9 @@ class SimulationConfig:
     rewiring_cooldown: int = 3
     checkpoint_every: int = 5
     seeder_strategy: str = "combined"
+    # Parametri StateMachine (prima letti con getattr ma mai caricabili da YAML)
+    min_resistance_exposure: float = 0.12
+    resistance_susceptibility_cutoff: float = 0.5
 
 
 @dataclass
@@ -165,6 +168,9 @@ class InfluenceConfig:
     simulation_rounds: int = 100
     activation_threshold: float = 0.4
     celf_interval: int = 5
+    # Effetto dei fact-checker (F) nella StateMachine
+    fc_resistance_threshold: float = 0.25   # I -> R se frazione vicini F >= soglia
+    fc_protection_threshold: float = 0.10   # S -> R se frazione vicini F >= soglia
 
 
 # ---------------------------------------------------------------------------

@@ -143,11 +143,27 @@ class Agent:
         self._last_context_hash: str | None = None
         self._last_response: "LLMResponse | None" = None
 
-        # Direzione fissa per perturbazione embedding (seed per riproducibilita')
-        rng = np.random.default_rng(cfg.execution.random_seed + node_id)
+        # Direzione di perturbazione embedding.
+        # FIX: la direzione della "narrazione polarizzante" deve essere COMUNE a
+        # tutti gli agenti, altrimenti gli infetti vengono spinti in direzioni
+        # casuali e scorrelate e il rewiring (basato sulla similarita' degli
+        # embedding) non riflette le opinioni. Qui: direzione globale condivisa
+        # (seed globale) + piccola componente individuale per eterogeneita'.
         dim = cfg.gnn.embedding_dim
-        direction = rng.standard_normal(dim).astype(np.float32)
-        self._infection_direction: np.ndarray = direction / (np.linalg.norm(direction) + 1e-8)
+        self._infection_direction: np.ndarray = self._build_direction(
+            cfg.execution.random_seed, node_id, dim
+        )
+
+    _DIRECTION_NOISE = 0.1    # peso della componente individuale
+
+    @staticmethod
+    def _build_direction(seed: int, node_id: int, dim: int) -> np.ndarray:
+        shared = np.random.default_rng(seed).standard_normal(dim)
+        shared /= np.linalg.norm(shared) + 1e-8
+        noise = np.random.default_rng(seed + 1 + node_id).standard_normal(dim)
+        noise /= np.linalg.norm(noise) + 1e-8
+        direction = shared + Agent._DIRECTION_NOISE * noise
+        return (direction / (np.linalg.norm(direction) + 1e-8)).astype(np.float32)
 
     def initialize(
         self,

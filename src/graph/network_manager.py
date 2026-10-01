@@ -40,6 +40,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Codifica numerica degli stati per le metriche di belief.
+# UNICA fonte di verita': usata sia da get_belief_map() (Fase 2 / pre-intervento)
+# sia da compute_full_influence_report() (post-intervento). Prima i due punti
+# usavano codifiche diverse e il delta di Belief Polarisation era un artefatto.
+# ---------------------------------------------------------------------------
+STATE_TO_BELIEF: dict[str, float] = {"S": 0.0, "I": 1.0, "R": 0.5, "F": -0.5}
+BELIEF_RANGE: tuple[float, float] = (
+    min(STATE_TO_BELIEF.values()),
+    max(STATE_TO_BELIEF.values()),
+)
+
+
+def belief_map_from_states(states: dict[int, str]) -> dict[int, float]:
+    """Converte {node: stato} in {node: belief} con la codifica STATE_TO_BELIEF."""
+    return {n: STATE_TO_BELIEF.get(s, 0.0) for n, s in states.items()}
+
 
 class NetworkManager:
     """
@@ -123,10 +140,8 @@ class NetworkManager:
         return dict(self._agent_states)
 
     def get_belief_map(self) -> dict[int, float]:
-        """Converte stati discreti in valori float [0, 1] per le metriche.
-        Ottimizzato: lookup con dict invece di .get() per ogni nodo."""
-        _STATE_TO_FLOAT = {"S": 0.0, "I": 1.0, "R": 0.5, "F": -0.5}
-        return {n: _STATE_TO_FLOAT[s] for n, s in self._agent_states.items()}
+        """Converte stati discreti in valori float (codifica STATE_TO_BELIEF)."""
+        return belief_map_from_states(self._agent_states)
 
     # ------------------------------------------------------------------
     # Feed vicinato

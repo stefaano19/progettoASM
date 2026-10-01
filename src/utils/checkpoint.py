@@ -163,12 +163,12 @@ class CheckpointManager:
 
     def load_latest(self) -> CheckpointData:
         """Carica il checkpoint piu' recente (step piu' alto disponibile)."""
-        checkpoints = sorted(self._checkpoint_dir.glob("ckpt_step_*.pkl"))
+        checkpoints = self.list_checkpoints()   # ordinati per step numerico
         if not checkpoints:
             raise FileNotFoundError(
                 f"Nessun checkpoint trovato in: {self._checkpoint_dir}"
             )
-        return self._load_from_path(checkpoints[-1])
+        return self._load_from_path(checkpoints[-1][1])
 
     def restore_network_manager(
         self,
@@ -192,13 +192,14 @@ class CheckpointManager:
     def list_checkpoints(self) -> list[tuple[int, Path]]:
         """Elenca tutti i checkpoint disponibili (step, path)."""
         result = []
-        for p in sorted(self._checkpoint_dir.glob("ckpt_step_*.pkl")):
+        for p in self._checkpoint_dir.glob("ckpt_step_*.pkl"):
             try:
                 step = int(p.stem.split("_")[-1])
                 result.append((step, p))
             except ValueError:
                 pass
-        return result
+        # FIX: ordinamento per numero di step, non alfabetico
+        return sorted(result, key=lambda x: x[0])
 
     def has_checkpoint(self, step: int | None = None) -> bool:
         """True se esiste almeno un checkpoint (o specificamente per `step`)."""
@@ -227,8 +228,8 @@ class CheckpointManager:
         return data
 
     def _prune_old_checkpoints(self) -> None:
-        """Mantieni solo gli ultimi `keep_last` checkpoint."""
-        checkpoints = sorted(self._checkpoint_dir.glob("ckpt_step_*.pkl"))
+        """Mantieni solo gli ultimi `keep_last` checkpoint (per step numerico)."""
+        checkpoints = [p for _, p in self.list_checkpoints()]
         to_delete = checkpoints[: max(0, len(checkpoints) - self._keep_last)]
         for p in to_delete:
             try:

@@ -15,12 +15,15 @@ Modello di transizione: Linear Threshold (LT) esteso
 Il classico LT usa una soglia fissa theta_u. Qui la soglia e' modulata
 dall'output dell'agente LLM:
 
-    effective_threshold(u) = base_threshold(u) * (1 - susceptibility_modifier)
+dove `susceptibility` (in [0, 1]) e' il campo dell'output LLM:
 
-dove `susceptibility_modifier` e' il campo `susceptibility` dell'output LLM,
-normalizzato in [-0.5, +0.5] attorno alla base.
+    effective_threshold(u) = base_threshold(u) * (1.5 - susceptibility)
+
+quindi la soglia varia fra 0.5x (susc=1) e 1.5x (susc=0) la soglia base.
 
 Regole di transizione:
+  S -> R  : (inoculazione fact-check) se frazione_vicini_F >= fc_protection_threshold
+            AND frazione_vicini_F >= frazione_vicini_I AND proposed_state != "I"
   S -> I  : se frazione_vicini_I >= effective_threshold  AND proposed_state == "I"
   S -> R  : se spread_intent == False
             AND frazione_vicini_I >= min_resistance_exposure (esposizione non banale)
@@ -126,6 +129,7 @@ class StateMachine:
         relapse_threshold: float = 0.6,
         min_resistance_exposure: float = 0.12,
         resistance_susceptibility_cutoff: float = 0.5,
+        fc_protection_threshold: float = 0.10,
     ) -> None:
         self._rng = random.Random(seed)
         self._base_threshold_mean = base_threshold_mean
@@ -134,6 +138,7 @@ class StateMachine:
         self._relapse_threshold = relapse_threshold
         self._min_resistance_exposure = min_resistance_exposure
         self._resistance_susceptibility_cutoff = resistance_susceptibility_cutoff
+        self._fc_protection_threshold = fc_protection_threshold
         self._node_thresholds: dict[int, float] = {}
 
     @classmethod
@@ -141,8 +146,11 @@ class StateMachine:
         # getattr con default: non rompe se questi campi non esistono ancora
         # nella tua dataclass Config — puoi aggiungerli quando vuoi.
         sim_cfg = getattr(cfg, "simulation", None)
+        inf_cfg = getattr(cfg, "influence", None)
         return cls(
             seed=cfg.execution.random_seed,
+            resistance_threshold=getattr(inf_cfg, "fc_resistance_threshold", 0.25),
+            fc_protection_threshold=getattr(inf_cfg, "fc_protection_threshold", 0.10),
             min_resistance_exposure=getattr(sim_cfg, "min_resistance_exposure", 0.12),
             resistance_susceptibility_cutoff=getattr(
                 sim_cfg, "resistance_susceptibility_cutoff", 0.5
@@ -243,7 +251,19 @@ class StateMachine:
             reason = "fact_checker_permanent"
 
         elif state == AgentState.S:
-            if fraction_I >= theta and proposed == AgentState.I:
+            # FIX: i fact-checker ora agiscono anche sui nodi S (inoculazione).
+            # Prima F influenzava solo gli I con >= 25% di vicini F, condizione
+            # quasi irraggiungibile con budget piccoli: l'intervento CELF non
+            # poteva avere effetto per costruzione.
+            if (
+                n_factcheck > 0
+                and fraction_F >= self._fc_protection_threshold
+                and fraction_F >= fraction_I
+                and proposed != AgentState.I
+            ):
+                new_state = AgentState.R
+                reason = f"fact_check_inoculation (f_F={fraction_F:.2f})"
+            elif fraction_I >= theta and proposed == AgentState.I:
                 new_state = AgentState.I
                 reason = f"lt_infection (f_I={fraction_I:.2f} >= theta={theta:.2f})"
             elif (

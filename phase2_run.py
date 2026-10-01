@@ -78,18 +78,22 @@ def main(args: argparse.Namespace) -> None:
 
     final_metrics: dict = {}
     try:
-        final_metrics = orch.run(n_steps=n_steps)
+        # FIX: riparte da orch.next_step (= ckpt_step+1 con --resume, 0 altrimenti).
+        # Prima partiva sempre da 0 e, con --resume, sovrascriveva la storia.
+        final_metrics = orch.run(n_steps=n_steps, start_step=orch.next_step)
     except KeyboardInterrupt:
         logger.warning("\n[Fase 2] Interrotto dall'utente — salvo checkpoint...")
         from src.utils.checkpoint import CheckpointManager
         ckpt = CheckpointManager(cfg)
         ckpt.save(
-            step=orch.current_step,
+            step=max(orch.next_step - 1, 0),   # ultimo step completato
             network_manager=orch.network_manager,
             gnn_weights=orch._model.get_weights(),
             patient_zero_ids=orch._patient_zero_ids,
         )
         logger.info("Checkpoint salvato. Puoi riprendere con --resume.")
+
+    orch.close()
 
     # -------------------------------------------------------
     # Report finale
@@ -100,7 +104,7 @@ def main(args: argparse.Namespace) -> None:
     logger.info("\n" + "=" * 60)
     logger.info("RIEPILOGO FASE 2")
     logger.info("=" * 60)
-    logger.info("Step eseguiti       : %d", orch.current_step + 1)
+    logger.info("Ultimo step eseguito: %d", orch.next_step - 1)
     logger.info("Nodi S (Susceptible): %d", state_summary.get("S", 0))
     logger.info("Nodi I (Infected)   : %d", state_summary.get("I", 0))
     logger.info("Nodi R (Resistant)  : %d", state_summary.get("R", 0))

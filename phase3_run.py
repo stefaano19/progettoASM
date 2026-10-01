@@ -68,24 +68,24 @@ def main(args: argparse.Namespace) -> None:
     from src.utils.checkpoint import CheckpointManager
 
     ckpt_manager = CheckpointManager(cfg)
+    use_mock = not args.no_mock_llm
+    logger.info("LLM          : %s", "mock" if use_mock else "reale")
     orch = SimulationOrchestrator.build_from_config(
         cfg,
-        use_mock_llm=True,
+        use_mock_llm=use_mock,   # FIX: prima era sempre True (mock) anche in produzione
         resume=ckpt_manager.has_checkpoint(),
     )
 
     nm = orch.network_manager
     logger.info(
         "Stato caricato: %d nodi | %d archi | step corrente: %d",
-        nm.num_nodes, nm.num_edges, orch.current_step,
+        nm.num_nodes, nm.num_edges, orch.next_step,
     )
 
     # -------------------------------------------------------
     # 2. Metriche baseline (pre-intervento)
     # -------------------------------------------------------
     logger.info("\n[2/5] Calcolo metriche baseline (pre-intervento)...")
-    import json as _json
-
     from src.graph.metrics import compute_all_metrics
     from src.agents.state_machine import StateMachine
 
@@ -136,14 +136,11 @@ def main(args: argparse.Namespace) -> None:
         from src.influence.injector import FactCheckerInjector
 
         injector = FactCheckerInjector(cfg)
-        injected_nodes = injector.inject(nm, celf_seeds, step=orch.current_step)
+        injected_nodes = injector.inject(nm, celf_seeds, step=orch.next_step)
         logger.info("Fact-checker iniettati: %d nodi", len(injected_nodes))
 
-        # Aggiorna stati degli agenti per i nodi iniettati
-        for node_id in injected_nodes:
-            if node_id in orch._agents:
-                from src.agents.agent import AgentState
-                orch._agents[node_id]._state = AgentState.from_str("F")
+        # Allinea lo stato interno degli agenti al grafo (nodi iniettati -> F)
+        orch.sync_agent_states(injected_nodes)
     else:
         logger.info("\n[3/5] CELF disabilitato (--no-celf). Skip.")
         logger.info("[4/5] Nessuna iniezione.")
@@ -153,8 +150,9 @@ def main(args: argparse.Namespace) -> None:
     # -------------------------------------------------------
     logger.info("\n[5/5] Esecuzione %d step post-intervento...", n_post_steps)
     orch._phase = "3"  # Marca i prossimi step come Fase 3 nel CSV
-    start_step = orch.current_step + 1
-    post_metrics = orch.run(n_steps=n_post_steps, start_step=start_step)
+    # FIX: next_step e' gia' il primo step non eseguito (prima +1 saltava uno step)
+    orch.run(n_steps=n_post_steps, start_step=orch.next_step)
+    orch.close()
 
     # -------------------------------------------------------
     # Report finale
@@ -250,6 +248,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--steps", type=int, default=None,
         help="Step post-intervento (default: max_steps // 4)",
+    )
+    parser.add_argument(
+        "--no-mock-llm", action="store_true",
+        help="Usa LLM reale invece del mock (come in phase2_run.py)",
     )
     args = parser.parse_args()
     main(args)

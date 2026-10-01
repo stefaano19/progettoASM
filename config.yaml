@@ -76,12 +76,14 @@ simulation:
   rewiring_cooldown:      2        # step di cooldown tra rewiring consecutivi
   checkpoint_every:       1       # salva checkpoint ogni N step
   seeder_strategy:        "combined" # strategia selezione pazienti zero
+  min_resistance_exposure: 0.12      # S -> R richiede almeno questa frazione di vicini I
+  resistance_susceptibility_cutoff: 0.5  # ... e susceptibility LLM sotto questa soglia
 
 # ---------------------------------------------------------------------------
 # LLM Backend  (Fase 1-2)
 # ---------------------------------------------------------------------------
 llm:
-  backend: "api"           # "api" | "local"
+  backend: "api"           # "api" | "local"  (il notebook Kaggle forza "local" = vLLM)
   max_concurrent_requests: 1     # Ollama: inferenza sequenziale
 
   api:
@@ -126,3 +128,5 @@ influence:
   simulation_rounds:  30            # Monte Carlo per stima spread
   activation_threshold: 0.4         # soglia infection_rate per attivare CELF
   celf_interval:      15             # ogni quanti step riesegui CELF
+  fc_resistance_threshold: 0.25      # I -> R se frazione vicini F >= soglia
+  fc_protection_threshold: 0.10      # S -> R (inoculazione) se frazione vicini F >= soglia

@@ -449,18 +449,28 @@ def compute_echo_chamber_index(
     return float(ratios.mean())
 
 
-def compute_belief_polarisation(belief_states: dict[int, float]) -> float:
+def compute_belief_polarisation(
+    belief_states: dict[int, float],
+    value_range: tuple[float, float] = (0.0, 1.0),
+) -> float:
     """
     Belief Polarisation Index:
-    Varianza degli stati di belief/infezione (numerici) normalizzata a [0, 1].
-    Massima varianza per valori binari 0/1 = 0.25.
+    Varianza dei valori di belief normalizzata a [0, 1].
+
+    La varianza massima per valori in [lo, hi] e' ((hi - lo) / 2)^2, raggiunta
+    con meta' dei nodi a lo e meta' a hi (per 0/1 vale 0.25). Prima si
+    divideva sempre per 0.25 anche se la codifica degli stati va da -0.5 a 1,
+    saturando l'indice a 1.
     """
     if not belief_states:
         return 0.0
-    values = list(belief_states.values())
-    variance = float(np.var(values))
-    # Normalizza: max variance = 0.25 (distribuzione 50/50 tra 0 e 1)
-    return min(variance / 0.25, 1.0)
+    values = np.fromiter(belief_states.values(), dtype=np.float64,
+                         count=len(belief_states))
+    lo, hi = value_range
+    max_var = ((hi - lo) / 2.0) ** 2
+    if max_var <= 0:
+        return 0.0
+    return float(min(np.var(values) / max_var, 1.0))
 
 
 # ---------------------------------------------------------------------------
@@ -524,10 +534,16 @@ def compute_all_metrics(
         metrics["echo_chamber_index"] = None
 
     if belief_states:
-        values = np.fromiter(belief_states.values(), dtype=np.float32, count=len(belief_states))
-        metrics["belief_polarisation"] = float(min(np.var(values) / 0.25, 1.0))
+        from src.graph.network_manager import BELIEF_RANGE, STATE_TO_BELIEF
+        values = np.fromiter(belief_states.values(), dtype=np.float64, count=len(belief_states))
+        metrics["belief_polarisation"] = compute_belief_polarisation(
+            belief_states, value_range=BELIEF_RANGE
+        )
         metrics["mean_belief"] = float(np.mean(values))
-        metrics["infection_rate"] = float(np.sum(values > 0.5)) / len(values)
+        # Infetto <=> belief == valore di I (robusto a qualunque codifica)
+        metrics["infection_rate"] = float(
+            np.sum(np.isclose(values, STATE_TO_BELIEF["I"]))
+        ) / len(values)
     else:
         metrics["belief_polarisation"] = None
         metrics["mean_belief"] = None

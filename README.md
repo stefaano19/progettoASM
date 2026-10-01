@@ -81,13 +81,14 @@ progettoASM/
 │   ├── agents/
 │   │   ├── agent.py               # Agente cognitivo (percezione → cognizione → azione)
 │   │   ├── llm_client.py          # Wrapper LLM portabile (vLLM/Ollama/Gemini + cache su disco)
+│   │   ├── prompts.py             # Prompt di sistema/utente degli agenti
 │   │   ├── seeder.py              # Selezione dei "pazienti zero"
 │   │   └── state_machine.py       # Transizioni S/I/R/F (Linear Threshold modulato)
 │   ├── gnn/
 │   │   ├── embeddings.py          # EmbeddingManager (Word2Vec)
 │   │   ├── model.py               # GraphSAGEModel (PyTorch Geometric / NumPy fallback)
 │   │   ├── trainer.py             # GNNTrainer — training + link prediction
-│   │   └── rewirer.py             # Applica soglie/filtri di omofilia per il rewiring
+│   │   └── rewirer.py             # Applica le soglie di score GNN (con vincoli di sicurezza)
 │   ├── influence/
 │   │   ├── celf.py                # Algoritmo CELF (Influence Maximization)
 │   │   ├── injector.py            # FactCheckerInjector
@@ -95,10 +96,13 @@ progettoASM/
 │   └── utils/
 │       ├── logger.py              # SimLogger (log JSONL)
 │       ├── checkpoint.py          # CheckpointManager (resume cross-sessione)
+│       ├── config.py              # Caricamento config.yaml in dataclass
 │       └── seed.py                # Riproducibilità (set_all_seeds)
-└── results/
-    ├── metrics_history.csv        # Storico metriche per step
-    └── phase3_report.json         # Report finale dell'intervento CELF
+├── phase0_run.py … phase3_run.py   # Entry point delle singole fasi
+├── scripts/check_propagation.py
+├── tests/                     # Test pytest (incl. test_fixes.py)
+└── results/                   # Generati a runtime: metrics_history.csv,
+                               # phase2_report.json, phase3_report.json, checkpoints/
 ```
 
 > La struttura sopra riflette i moduli descritti nella relazione tecnica del progetto; verificane i percorsi esatti nel repository, che potrebbero differire leggermente.
@@ -168,6 +172,11 @@ Il `SimulationOrchestrator` esegue il ciclo ricorsivo: **ciclo Agenti** (chiamat
 Seleziona tramite l'algoritmo **CELF** i nodi ottimali per massimizzare la diffusione del messaggio correttivo, li converte in Fact-Checker (stato F) e fa avanzare la simulazione per $N$ step post-intervento, confrontando le metriche prima/dopo.
 
 ## Risultati Principali
+
+> **Nota:** i valori sotto sono stati ottenuti prima delle correzioni descritte in
+> `CHANGELOG_FIX.md` (resume degli agenti, codifica della Belief Polarisation,
+> direzione degli embedding, effetto dei fact-checker). Vanno rigenerati
+> rieseguendo la pipeline prima di essere citati.
 
 ### Baseline (Fase 0, step 0)
 

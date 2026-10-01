@@ -135,7 +135,8 @@ class CELF:
             futures = [
                 executor.submit(
                     _parallel_evaluate_spread_chunk,
-                    (graph, chunk, current_states, self._simulation_rounds, activation_probabilities)
+                    (graph, chunk, current_states, self._simulation_rounds,
+                     activation_probabilities, self._random_seed)
                 )
                 for chunk in candidate_chunks
             ]
@@ -265,7 +266,7 @@ class CELF:
 
 
 def _parallel_evaluate_spread_chunk(
-    args: tuple[nx.Graph, list[int], dict[int, str], int, dict[tuple[int, int], float]]
+    args: tuple
 ) -> list[tuple[int, float]]:
     """
     Top-level helper function to evaluate candidate nodes in parallel.
@@ -273,10 +274,12 @@ def _parallel_evaluate_spread_chunk(
     """
     import random
     
-    graph, candidates, agent_states, simulation_rounds, activation_probabilities = args
-    random_generator = random.Random()
+    graph, candidates, agent_states, simulation_rounds, activation_probabilities, base_seed = args
     results = []
     for candidate_node in candidates:
+        # FIX: RNG con seed per candidato -> risultato riproducibile e
+        # indipendente dal numero di core / dalla suddivisione in chunk.
+        random_generator = random.Random(base_seed * 1_000_003 + candidate_node)
         gain = CELF._simulate_spread(
             graph=graph,
             seeds=[candidate_node],

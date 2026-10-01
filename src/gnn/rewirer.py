@@ -107,12 +107,18 @@ class Rewirer:
         removal_candidates.sort(key=lambda x: x[1])  # Score più basso prima
 
         to_remove: list[tuple[int, int]] = []
+        # FIX: traccia il grado residuo durante la selezione, altrimenti piu'
+        # rimozioni nello stesso step possono isolare un nodo (il controllo
+        # usava sempre il grado iniziale di G).
+        residual_degree: dict[int, int] = {}
         for (u, v), score in removal_candidates:
             if len(to_remove) >= self._max_remove:
                 break
-            if not self._is_safe_removal(u, v, G, states):
+            if not self._is_safe_removal(u, v, G, states, residual_degree):
                 continue
             to_remove.append((u, v))
+            residual_degree[u] = residual_degree.get(u, G.degree(u)) - 1
+            residual_degree[v] = residual_degree.get(v, G.degree(v)) - 1
 
         # --- Archi da aggiungere ---
         addition_candidates = [
@@ -150,12 +156,14 @@ class Rewirer:
         v: int,
         G: "nx.Graph",
         states: dict[int, str],
+        residual_degree: dict[int, int] | None = None,
     ) -> bool:
         """Non rimuovere archi verso fact-checker o che isolerebbero un nodo."""
         if states.get(v) == "F" or states.get(u) == "F":
             return False
         # Non isolare il nodo (grado minimo 1 dopo rimozione)
-        if G.degree(u) <= 1 or G.degree(v) <= 1:
+        rd = residual_degree or {}
+        if rd.get(u, G.degree(u)) <= 1 or rd.get(v, G.degree(v)) <= 1:
             return False
         return True
 

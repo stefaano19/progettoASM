@@ -190,10 +190,10 @@ def compute_full_influence_report(
     from src.agents.state_machine import StateMachine
 
     # Metriche topologiche post-intervento
-    belief_map = {
-        node: 1.0 if state == "I" else (0.5 if state == "F" else 0.0)
-        for node, state in agent_states.items()
-    }
+    # FIX: stessa codifica usata per la baseline (NetworkManager.get_belief_map),
+    # altrimenti il delta "prima/dopo" confronta due scale diverse.
+    from src.graph.network_manager import belief_map_from_states
+    belief_map = belief_map_from_states(agent_states)
     current_metrics = compute_all_metrics(G, cfg, community_map, belief_map)
 
     # Conteggi stati

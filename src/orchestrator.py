@@ -108,6 +108,9 @@ class SimulationOrchestrator:
         self._patient_zero_ids = patient_zero_ids
         self._current_step = resume_step
         self._resume_step = resume_step
+        # Prossimo step da eseguire = ultimo step eseguito + 1
+        # (0 per una run nuova, ckpt_step+1 dopo un resume).
+        self._next_step = resume_step
         self._checkpoint_every = cfg.simulation.checkpoint_every
         self._phase = "2"  # Default: Fase 2 (co-evoluzione)
 
@@ -211,21 +214,6 @@ class SimulationOrchestrator:
         patient_zero_ids = seeder.select(subG, centralities, community_map)
         seeder.inject(nm, patient_zero_ids, initial_state="I")
 
-        # --- Agenti ---
-        llm_client = MockLLMClient(seed=cfg.execution.random_seed) if use_mock_llm \
-            else LLMClient.from_config(cfg)
-        state_machine = StateMachine.from_config(cfg)
-
-        agents: dict[int, Agent] = {}
-        for node_id in nm.nodes:
-            initial_state = nm.get_state(node_id)
-            agent = Agent(node_id=node_id, cfg=cfg, llm_client=llm_client,
-                          state_machine=state_machine, initial_state=initial_state)
-            comm = community_map.get(node_id, 0)
-            centrality_val = centralities.get(node_id, {}).get("degree_centrality", 0.0)
-            agent.initialize(community=comm, centrality=centrality_val, network_manager=nm)
-            agents[node_id] = agent
-
         # --- GNN ---
         dim = cfg.gnn.embedding_dim
         gnn_model = GraphSAGEModel(
@@ -247,6 +235,7 @@ class SimulationOrchestrator:
             if ckpt_data.gnn_weights:
                 gnn_model.set_weights(ckpt_data.gnn_weights)
             patient_zero_ids = ckpt_data.patient_zero_ids
+            ckpt_manager._cumulative_metrics = list(ckpt_data.cumulative_metrics or [])
             # Riprendiamo dal passo SUCCESSIVO a quello salvato
             resume_step = ckpt_data.step + 1
             logger.info(
@@ -254,6 +243,30 @@ class SimulationOrchestrator:
                 resume_step,
                 ckpt_data.step,
             )
+
+            # Le community salvate nel checkpoint sono la fonte di verita'
+            if nm._community_map:
+                community_map = nm._community_map
+
+        # --- Agenti ---
+        # FIX: gli agenti vengono creati DOPO l'eventuale resume, leggendo lo
+        # stato dal NetworkManager definitivo (quello del checkpoint). Prima
+        # venivano creati dal grafo appena ri-seminato e il loro stato interno
+        # restava quello iniziale (pazienti zero = I, resto = S), disallineato
+        # dal grafo ripristinato.
+        llm_client = MockLLMClient(seed=cfg.execution.random_seed) if use_mock_llm \
+            else LLMClient.from_config(cfg)
+        state_machine = StateMachine.from_config(cfg)
+
+        agents: dict[int, Agent] = {}
+        for node_id in nm.nodes:
+            initial_state = nm.get_state(node_id)
+            agent = Agent(node_id=node_id, cfg=cfg, llm_client=llm_client,
+                          state_machine=state_machine, initial_state=initial_state)
+            comm = community_map.get(node_id, 0)
+            centrality_val = centralities.get(node_id, {}).get("degree_centrality", 0.0)
+            agent.initialize(community=comm, centrality=centrality_val, network_manager=nm)
+            agents[node_id] = agent
 
         sim_logger.log_run_start(
             config_hash=cfg.config_hash,
@@ -288,21 +301,23 @@ class SimulationOrchestrator:
     # Run
     # ------------------------------------------------------------------
 
-    def run(self, n_steps: int, start_step: int = 0) -> dict:
+    def run(self, n_steps: int, start_step: int | None = None) -> dict:
         """
         Esegui `n_steps` step co-evolutivi.
 
         Parameters
         ----------
         n_steps : int      Numero di step da eseguire.
-        start_step : int   Step iniziale (per resume).
+        start_step : int | None
+            Step iniziale. Se None (default) riparte da `self.next_step`,
+            cioe' 0 per una run nuova e ckpt_step+1 dopo un resume.
 
         Returns
         -------
         dict con le metriche finali.
         """
-        from src.graph.metrics import compute_all_metrics
-        from src.agents.state_machine import StateMachine
+        if start_step is None:
+            start_step = self._next_step
 
         logger.info("=" * 60)
         logger.info("[Orchestrator] Avvio loop | step %d -> %d", start_step, start_step + n_steps - 1)
@@ -329,6 +344,8 @@ class SimulationOrchestrator:
         """Singolo step co-evolutivo."""
         from src.graph.metrics import compute_all_metrics
         from src.agents.state_machine import StateMachine
+
+        self._current_step = step
 
         # 1. AGENT CYCLE
         n_changed = self._agent_cycle(step)
@@ -410,6 +427,7 @@ class SimulationOrchestrator:
             # Se non c'è stato checkpoint, possiamo comunque voler esportare il csv aggiornato
             self._export_to_kaggle_working(step, only_csv=True)
 
+        self._next_step = step + 1
         return metrics
 
     def _export_to_kaggle_working(self, step: int, only_csv: bool = False) -> None:
@@ -649,6 +667,32 @@ class SimulationOrchestrator:
     @property
     def current_step(self) -> int:
         return self._current_step
+
+    @property
+    def next_step(self) -> int:
+        """Prossimo step da eseguire (ultimo step eseguito + 1)."""
+        return self._next_step
+
+    def sync_agent_states(self, node_ids=None) -> int:
+        """
+        Allinea lo stato interno degli Agent a quello del NetworkManager.
+
+        Da chiamare dopo ogni modifica di stato fatta "da fuori" del ciclo
+        agenti (es. iniezione dei fact-checker CELF). Usa Agent.set_state,
+        che aggiunge anche la nota di cambio stato al prossimo prompt LLM.
+        Ritorna il numero di agenti aggiornati.
+        """
+        ids = self._agents.keys() if node_ids is None else node_ids
+        n = 0
+        for node_id in ids:
+            agent = self._agents.get(node_id)
+            if agent is None:
+                continue
+            nm_state = self._nm.get_state(node_id)
+            if agent.state != nm_state:
+                agent.set_state(nm_state)
+                n += 1
+        return n
 
     @property
     def resume_step(self) -> int:
