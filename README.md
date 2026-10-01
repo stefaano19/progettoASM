@@ -199,7 +199,7 @@ Seleziona tramite l'algoritmo **CELF** i nodi ottimali per massimizzare la diffu
 | Belief Polarisation | 0.5577 | 0.9758 | +0.4181 |
 | Nodi F (Fact-Checker) | 0 | 20 | +20 |
 
-**Sintesi:** l'intervento CELF utilizza correttamente l'intero budget richiesto, ma con soli 20 fact-checker su 5.000 nodi (0.4% della popolazione) non riesce a invertire il trend epidemico — anzi, allungare la finestra post-intervento avvantaggia anche la naturale prosecuzione del contagio. L'effetto più marcato si osserva a livello **cognitivo** (Belief Polarisation quasi raddoppiata) più che strutturale (ECI e Modularity restano quasi invariati). L'LLM reale (vLLM) è attivo in tutte le fasi, incluso il post-intervento: il risultato non è quindi un artefatto di semplificazione del ragionamento, ma un effetto genuino della sproporzione tra budget e scala dell'infezione.
+**Sintesi:** con 20 fact-checker su 5.000 nodi (0.4% della popolazione), l'intervento CELF non riesce a invertire il trend epidemico nei 30 step post-intervento osservati: l'Infection Rate continua a crescere. L'effetto più marcato si osserva a livello **cognitivo** (Belief Polarisation quasi raddoppiata) più che strutturale (ECI e Modularity restano quasi invariati). L'LLM reale (vLLM) è attivo in tutte le fasi, incluso il post-intervento: il risultato non è quindi un artefatto di semplificazione del ragionamento, ma un effetto genuino della sproporzione tra budget e scala dell'infezione.
 
 ## Limitazioni e Sviluppi Futuri
 
