@@ -240,6 +240,7 @@ class GNNTrainer:
         G: "nx.Graph",
         embeddings: np.ndarray,
         candidate_pairs: list[tuple[int, int]] | None = None,
+        step: int = 0,
     ) -> dict[tuple[int, int], float]:
         """
         Calcola gli score di link per:
@@ -266,7 +267,7 @@ class GNNTrainer:
 
         # Score candidati per aggiunta
         if candidate_pairs is None:
-            candidate_pairs = self._generate_candidates(G)
+            candidate_pairs = self._generate_candidates(G, step=step)
 
         if candidate_pairs:
             filtered_cands = []
@@ -287,27 +288,44 @@ class GNNTrainer:
     def _generate_candidates(
         self,
         G: "nx.Graph",
-        max_candidates: int = 200,
+        step: int = 0,
+        n_sources: int | None = None,
+        per_source: int | None = None,
     ) -> list[tuple[int, int]]:
         """
         Genera coppie candidate per nuovi archi (2-hop neighbours non connessi).
-        Limitato a `max_candidates` per efficienza.
+
+        FIX: prima il generatore era ricreato con lo stesso seed a ogni step,
+        quindi venivano sempre esplorati gli stessi 50 nodi sorgente (e si
+        usciva appena raggiunti 200 candidati, favorendo i primi). Ora:
+          - il seed dipende dallo step -> sorgenti diverse a ogni step,
+            riproducibili a parita' di seed globale;
+          - n_sources sorgenti (default cfg.gnn.rewire_candidate_sources);
+          - al massimo per_source candidati per sorgente, scelti a caso,
+            cosi' nessun nodo monopolizza il budget.
         """
-        rng = random.Random(self._seed)
+        if n_sources is None:
+            n_sources = getattr(self._cfg.gnn, "rewire_candidate_sources", 500)
+        if per_source is None:
+            per_source = getattr(self._cfg.gnn, "rewire_candidates_per_source", 5)
+
+        rng = random.Random(self._seed * 1_000_003 + step)
         candidates: set[tuple[int, int]] = set()
         nodes = list(G.nodes())
 
-        for u in rng.sample(nodes, min(50, len(nodes))):
-            nbrs = list(G.neighbors(u))
-            for nb in nbrs:
+        for u in rng.sample(nodes, min(n_sources, len(nodes))):
+            two_hop: set[int] = set()
+            for nb in G.neighbors(u):
                 for nb2 in G.neighbors(nb):
                     if nb2 != u and not G.has_edge(u, nb2):
-                        pair = (min(u, nb2), max(u, nb2))
-                        candidates.add(pair)
-                        if len(candidates) >= max_candidates:
-                            return list(candidates)
+                        two_hop.add(nb2)
+            if not two_hop:
+                continue
+            picks = rng.sample(sorted(two_hop), min(per_source, len(two_hop)))
+            for v in picks:
+                candidates.add((min(u, v), max(u, v)))
 
-        return list(candidates)
+        return sorted(candidates)
 
     # ------------------------------------------------------------------
     # Info

@@ -128,7 +128,8 @@ class SimulationOrchestrator:
         if not file_exists:
             self._csv_writer.writerow(
                 ["step", "S", "I", "R", "F", "ECI", "modularity_q",
-                 "gnn_loss", "edges", "transitions", "edges_added", "edges_removed", "phase"]
+                 "gnn_loss", "edges", "transitions", "edges_added", "edges_removed", "phase",
+                 "belief_polarisation", "opinion_homophily", "belief_assortativity"]
             )
             self._csv_file.flush()
         logger.debug("[Orchestrator] CSV metriche: %s (append=%s)", csv_path, file_exists)
@@ -381,11 +382,12 @@ class SimulationOrchestrator:
 
         logger.info(
             "  States: S=%d I=%d R=%d F=%d | "
-            "Rewire: +%d -%d | ECI=%.3f | Loss=%.4f",
+            "Rewire: +%d -%d | ECI=%.3f | Assort=%.3f | Loss=%.4f",
             state_counts["S"], state_counts["I"],
             state_counts["R"], state_counts["F"],
             n_added, n_removed,
             metrics.get("echo_chamber_index") or 0.0,
+            metrics.get("belief_assortativity") or 0.0,
             gnn_loss,
         )
 
@@ -410,6 +412,9 @@ class SimulationOrchestrator:
             n_added,
             n_removed,
             self._phase,
+            round(metrics.get("belief_polarisation") or 0.0, 4),
+            round(metrics.get("opinion_homophily") or 0.0, 4),
+            round(metrics.get("belief_assortativity") or 0.0, 4),
         ])
         self._csv_file.flush()  # flush immediato: leggibile anche se la sessione crasha
 
@@ -631,7 +636,7 @@ class SimulationOrchestrator:
         embeddings = self._nm._embeddings.copy()
 
         gnn_loss = self._trainer.train_step(self._nm.G, embeddings, step=step)
-        link_scores = self._trainer.predict_links(self._nm.G, embeddings)
+        link_scores = self._trainer.predict_links(self._nm.G, embeddings, step=step)
 
         return gnn_loss, link_scores
 

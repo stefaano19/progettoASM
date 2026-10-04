@@ -449,6 +449,39 @@ def compute_echo_chamber_index(
     return float(ratios.mean())
 
 
+def compute_opinion_echo_metrics(
+    G: nx.Graph,
+    belief_states: dict[int, float],
+) -> dict[str, float]:
+    """
+    Metriche di echo chamber basate sulle OPINIONI (non sulle community).
+
+    L'Echo Chamber Index classico misura quanto gli archi restano dentro le
+    community trovate in Fase 0: non dipende dalle opinioni e non puo'
+    rilevare echo chamber ideologiche. Queste metriche invece sì:
+
+      opinion_homophily    : frazione di archi i cui estremi hanno la stessa
+                             opinione (stesso valore di belief).
+      belief_assortativity : correlazione di Pearson delle belief ai due capi
+                             degli archi, in [-1, 1]. > 0 = chi la pensa allo
+                             stesso modo tende a essere connesso (echo chamber).
+    """
+    edges = [(u, v) for u, v in G.edges() if u in belief_states and v in belief_states]
+    if not edges:
+        return {"opinion_homophily": None, "belief_assortativity": None}
+    a = np.fromiter((belief_states[u] for u, _ in edges), dtype=np.float64, count=len(edges))
+    b = np.fromiter((belief_states[v] for _, v in edges), dtype=np.float64, count=len(edges))
+    homophily = float(np.mean(np.isclose(a, b)))
+    # Grafo non orientato: si usano entrambe le direzioni (simmetrico)
+    x = np.concatenate([a, b])
+    y = np.concatenate([b, a])
+    if np.std(x) == 0:
+        assort = 0.0
+    else:
+        assort = float(np.corrcoef(x, y)[0, 1])
+    return {"opinion_homophily": homophily, "belief_assortativity": assort}
+
+
 def compute_belief_polarisation(
     belief_states: dict[int, float],
     value_range: tuple[float, float] = (0.0, 1.0),
@@ -540,6 +573,7 @@ def compute_all_metrics(
             belief_states, value_range=BELIEF_RANGE
         )
         metrics["mean_belief"] = float(np.mean(values))
+        metrics.update(compute_opinion_echo_metrics(G, belief_states))
         # Infetto <=> belief == valore di I (robusto a qualunque codifica)
         metrics["infection_rate"] = float(
             np.sum(np.isclose(values, STATE_TO_BELIEF["I"]))
@@ -548,5 +582,7 @@ def compute_all_metrics(
         metrics["belief_polarisation"] = None
         metrics["mean_belief"] = None
         metrics["infection_rate"] = None
+        metrics["opinion_homophily"] = None
+        metrics["belief_assortativity"] = None
 
     return metrics

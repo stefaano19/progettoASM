@@ -19,7 +19,6 @@ Repository: [`github.com/stefaano19/progettoASM`](https://github.com/stefaano19/
 - [Esecuzione della Pipeline](#esecuzione-della-pipeline)
 - [Le Quattro Fasi](#le-quattro-fasi)
 - [Risultati Principali](#risultati-principali)
-- [Conclusioni](#conclusioni)
 - [Limitazioni e Sviluppi Futuri](#limitazioni-e-sviluppi-futuri)
 - [Riferimenti](#riferimenti)
 
@@ -60,8 +59,8 @@ Il ciclo si chiude in 6 passaggi: gli agenti generano opinioni che perturbano gl
 | Inferenza LLM | **vLLM** (server locale OpenAI-compatible) | Continuous batching, throughput elevato, nessun rate-limit da API cloud, piena sovranità sui dati |
 | Modello LLM | `casperhansen/llama-3-8b-instruct-awq` | Quantizzato AWQ, compatibile con GPU T4 (15 GB VRAM) |
 | Modello di diffusione | Linear Threshold (LT) esteso, modulato dall'LLM | Dinamica di contagio dell'opinione/stato |
-| Influence Maximization | **CELF** (Cost-Effective Lazy Forward) | Selezione submodulare dei nodi seed per il fact-checking |
-| Dataset | `ogbl-collab` (Open Graph Benchmark) | Rete di co-autoraggio accademico, 235.868 nodi / 967.632 archi (non orientati, deduplicati) |
+| Influence Maximization | **CELF** / greedy | Selezione dei seed fact-checker; obiettivo allineato alle regole della simulazione (IC Monte Carlo disponibile come opzione) |
+| Dataset | `ogbl-collab` (Open Graph Benchmark) | Rete di co-autoraggio accademico: 235.868 nodi, 967.632 archi non orientati (2.358.104 collaborazioni con timestamp prima della deduplicazione) |
 
 ## Struttura del Progetto
 
@@ -77,7 +76,7 @@ progettoASM/
 │   │   ├── data_loader.py         # Download/caching di ogbl-collab
 │   │   ├── extractor.py           # Campionamento del sottografo (Forest Fire, BFS, RWR, random)
 │   │   ├── community.py           # Community detection (Louvain, Label Propagation)
-│   │   ├── metrics.py             # Centralità, modularità, ECI, belief polarisation
+│   │   ├── metrics.py             # Centralità, modularità, ECI, polarizzazione e assortatività delle opinioni
 │   │   └── network_manager.py     # Layer unico di astrazione/persistenza del grafo dinamico
 │   ├── agents/
 │   │   ├── agent.py               # Agente cognitivo (percezione → cognizione → azione)
@@ -89,21 +88,24 @@ progettoASM/
 │   │   ├── embeddings.py          # EmbeddingManager (Word2Vec)
 │   │   ├── model.py               # GraphSAGEModel (PyTorch Geometric / NumPy fallback)
 │   │   ├── trainer.py             # GNNTrainer — training + link prediction
-│   │   └── rewirer.py             # Applica le soglie di score GNN (con vincoli di sicurezza)
+│   │   └── rewirer.py             # Rewiring dagli score GNN (swap a densità costante, vincoli di sicurezza)
 │   ├── influence/
-│   │   ├── celf.py                # Algoritmo CELF (Influence Maximization)
+│   │   ├── celf.py                # Selezione seed (obiettivo "threshold" o IC con CELF)
 │   │   ├── injector.py            # FactCheckerInjector
-│   │   └── metrics.py             # Fact-Checker Spread, Intervention Delta
+│   │   └── metrics.py             # Reach e copertura efficace dei fact-checker, delta
 │   └── utils/
 │       ├── logger.py              # SimLogger (log JSONL)
 │       ├── checkpoint.py          # CheckpointManager (resume cross-sessione)
 │       ├── config.py              # Caricamento config.yaml in dataclass
 │       └── seed.py                # Riproducibilità (set_all_seeds)
 ├── phase0_run.py … phase3_run.py   # Entry point delle singole fasi
-├── scripts/check_propagation.py
-├── tests/                     # Test pytest (incl. test_fixes.py)
-└── results/                   # Generati a runtime: metrics_history.csv,
-                               # phase2_report.json, phase3_report.json, checkpoints/
+├── scripts/
+│   ├── check_propagation.py
+│   └── compare_phase3.py          # Effetto dell'intervento: run con fact-checker vs controllo
+├── tests/                         # Test pytest (94 test)
+├── CHANGELOG_FIX.md               # Elenco delle correzioni
+└── results/                       # Generati a runtime: metrics_history.csv, phase3_report*.json,
+                                   # pipeline_summary*.json, figures/, checkpoints/
 ```
 
 ## Installazione
@@ -135,13 +137,27 @@ I parametri principali si impostano in testa al notebook (o in `config.yaml`):
 | Parametro | Descrizione | Esempio |
 |---|---|---|
 | `USE_MOCK_LLM` | `False` = usa l'LLM reale (vLLM); `True` = mock per debug rapido | `False` |
-| `PHASE2_STEPS` | Numero di **nuovi** step da eseguire in Fase 2 in questa sessione (non il totale cumulato) | `0` (se si riprende da checkpoint) |
-| `PHASE3_STEPS` | Step di simulazione post-intervento in Fase 3 | `30` |
+| `PHASE2_STEPS` | Numero di **nuovi** step da eseguire in Fase 2 in questa sessione (non il totale cumulato) | `50` |
+| `PHASE3_STEPS` | Step di simulazione in Fase 3 (`0` nelle sessioni intermedie di Fase 2) | `30` |
 | `CELF_BUDGET_K` | Numero di fact-checker da iniettare | `20` |
+| `CONTROL_RUN` | `True` = Fase 3 di controllo, stessi step ma senza fact-checker | `False` |
+| `FORCE_INJECTION` | Inietta anche se l'infection rate è sotto `influence.activation_threshold` (segnalato nel report) | `True` |
 | `SAMPLING_STRATEGY` | Strategia di campionamento del sottografo | `forest_fire` \| `bfs_seed` \| `random_walk` \| `random_nodes` |
 | `FOREST_FIRE_PROB` | Forward probability del Forest Fire Sampling (0.4–0.7) | `0.5` |
 | `TARGET_NODES` | Dimensione del sottografo campionato | `5000` |
 | `RESUME_FROM_CKPT` | Riprendi da un checkpoint salvato (cross-sessione, utile su Kaggle) | `True` |
+
+Parametri principali di `config.yaml` introdotti con le correzioni:
+
+| Parametro | Descrizione | Default |
+|---|---|---|
+| `gnn.rewire_mode` | `swap`: ogni arco aggiunto sostituisce l'arco esistente con lo score più basso (densità costante); `threshold`: rimozioni solo sotto soglia | `swap` |
+| `gnn.max_new_edges_per_step` | Archi sostituiti per step | `50` |
+| `gnn.rewire_candidate_sources` | Nodi sorgente esplorati a ogni step per i candidati (diversi a ogni step) | `500` |
+| `influence.celf_objective` | `threshold`: obiettivo allineato alla state machine; `ic`: Independent Cascade Monte Carlo | `threshold` |
+| `influence.fc_protection_threshold` | S → R se la frazione di vicini F supera la soglia | `0.10` |
+| `influence.fc_resistance_threshold` | I → R se la frazione di vicini F supera la soglia | `0.25` |
+| `influence.reach_hops` | Raggio della metrica di reach dei fact-checker | `1` |
 
 ## Esecuzione della Pipeline
 
@@ -152,6 +168,17 @@ Fase 0 → Fase 1 → Fase 2 → Fase 3
 ```
 
 Ogni fase salva automaticamente checkpoint (`.pkl`) e metriche (`metrics_history.csv`), così l'esecuzione può essere interrotta e ripresa — utile per superare i limiti di tempo delle sessioni Kaggle gratuite.
+
+Con l'LLM reale uno step dura circa 12 minuti (≈ 560 chiamate LLM per step su una T4). Piano tipico delle sessioni Kaggle (limite 12 ore):
+
+| Sessione | Parametri | Contenuto |
+|---|---|---|
+| 1 | `PHASE2_STEPS=50`, `PHASE3_STEPS=0` | Fase 0 + step 0–49 |
+| 2 | resume, `PHASE2_STEPS=46`, `PHASE3_STEPS=0` | step 50–95 |
+| 3 | resume dal checkpoint finale, `PHASE2_STEPS=0`, `PHASE3_STEPS=30` | Fase 3 con fact-checker |
+| 4 | stesso checkpoint della sessione 3, `CONTROL_RUN=True` | Fase 3 di controllo |
+
+Poi: `python scripts/compare_phase3.py --treatment phase3_report.json --control phase3_report_control.json`.
 
 ## Le Quattro Fasi
 
@@ -165,74 +192,48 @@ Inizializza il server vLLM, scarica/carica `ogbl-collab`, estrae un sottografo d
 Instanzia gli agenti (`agent.py`), il client LLM (`llm_client.py`), seleziona i "pazienti zero" (`seeder.py`, 15% della rete) e attiva la macchina a stati (`state_machine.py`) che governa le transizioni S → I → R → F secondo un modello Linear Threshold modulato dalla suscettibilità cognitiva valutata dall'LLM.
 
 ### Fase 2 — Dinamiche di Rete e Co-evoluzione
-Il `SimulationOrchestrator` esegue il ciclo ricorsivo: **ciclo Agenti** (chiamate LLM asincrone e batched) → **ciclo GNN** (training + link prediction) → **ciclo di Rewiring** (aggiunta/rimozione archi in base all'omofilia ideologica). Checkpoint frequenti garantiscono resilienza cross-sessione.
+Il `SimulationOrchestrator` esegue il ciclo ricorsivo: **ciclo Agenti** (chiamate LLM parallele, batched da vLLM) → **ciclo GNN** (training + link prediction) → **ciclo di Rewiring**. Le transizioni di stato perturbano gli embedding lungo una direzione "ideologica" comune (I in un verso, R e F nel verso opposto), quindi la link prediction riflette la vicinanza di opinione. Il rewiring è a densità costante: ogni arco aggiunto tra nodi con score alto sostituisce l'arco esistente con lo score più basso. Checkpoint frequenti garantiscono resilienza cross-sessione; le soglie dei nodi dipendono solo da seed e id del nodo, quindi restano identiche dopo ogni ripresa.
 
 ### Fase 3 — Intervento e Fact-Checking (CELF)
-Seleziona tramite l'algoritmo **CELF** i nodi ottimali per massimizzare la diffusione del messaggio correttivo, li converte in Fact-Checker (stato F) e fa avanzare la simulazione per $N$ step post-intervento, confrontando le metriche prima/dopo.
+Seleziona i nodi seed e li converte in Fact-Checker (stato F). Con l'obiettivo di default (`threshold`) la selezione massimizza il numero di nodi su cui la pressione dei fact-checker supera le soglie che nella simulazione producono davvero una transizione (S → R e I → R); il calcolo è deterministico ed esatto, con selezione greedy. L'obiettivo `ic` (Independent Cascade + CELF lazy-greedy) resta disponibile.
+
+L'effetto dell'intervento si misura confrontando due run di Fase 3 che partono dallo stesso checkpoint: una con i fact-checker e una di controllo senza (`CONTROL_RUN=True`). Il semplice "prima/dopo" di una run sola mescola l'effetto dei fact-checker con l'evoluzione spontanea della rete. Per rendere le run confrontabili, ogni richiesta all'LLM usa un seed derivato dal prompt.
+
+### Metriche
+- **Echo Chamber Index (ECI)** e **modularità**: misurano quanto gli archi restano dentro le community della Fase 0. Sono metriche strutturali: non dipendono dalle opinioni.
+- **Opinion homophily** e **belief assortativity**: misurano se i nodi con la stessa opinione sono connessi tra loro (echo chamber ideologiche). Codifica: S = 0, I = +1, R = F = −1.
+- **Belief polarisation**: varianza delle opinioni, normalizzata al massimo teorico.
+- **Reach dei fact-checker**: nodi entro `reach_hops` salti da un F; **copertura efficace**: nodi su cui la pressione F supera le soglie di transizione.
 
 ## Risultati Principali
 
-I valori seguenti provengono dall'ultima esecuzione di `notebooks/kaggle_full_run.ipynb` (LLM reale `llama-3-8b-instruct-awq` su vLLM, seed 42), successiva alle correzioni di `CHANGELOG_FIX.md`. La Fase 2 è stata eseguita in due sessioni Kaggle (step 0–57, poi resume da `ckpt_step_0057.pkl` per gli step 58–95). Parametri effettivi (override del notebook): 15% di pazienti zero (750 nodi), 15% di nodi attivati per step, rewiring ogni 2 step.
+### Baseline (Fase 0)
 
-### Baseline (Fase 0, step 0)
+La Fase 0 non è toccata dalle correzioni, quindi questi valori restano validi.
 
-| Metrica | Grafo originale (LCC) | Sottografo (Forest Fire) |
-|---|---|---|
-| Nodi / Archi | 232.865 / 961.883 | 5.000 / 26.246 |
-| Grado medio | 8.3 | 10.50 |
-| Clustering medio | 0.7204 | 0.6988 |
-| Modularity Q (Label Propagation) | 0.6957 | 0.8265 |
-| Community | 23.115 | 415 |
-| Echo Chamber Index | — | 0.8318 |
+| Metrica | Valore |
+|---|---|
+| Grafo completo (LCC) | 232.865 nodi / 961.883 archi |
+| Sottografo (Forest Fire, p = 0.5) | 5.000 nodi / 26.246 archi |
+| Densità | 0.0021 |
+| Grado medio | 10.50 (originale 8.3) |
+| Clustering medio | 0.6988 (originale 0.7204) |
+| Community (Label Propagation) | 415 |
+| Modularity Q | 0.8265 |
+| Echo Chamber Index | 0.8318 |
 
-Il campionamento preserva bene il clustering (−3%) ma produce un sottografo più modulare (+19% di Q) e con meno hub (grado max 119 contro 382).
+### Fasi 2 e 3
 
-### Co-evoluzione (Fase 2, step 0 → 95)
-
-| Metrica | Step 0 | Step 58 | Step 95 |
-|---|---|---|---|
-| S / I / R | 4.250 / 750 / 0 | 1.043 / 1.958 / 1.999 | 956 / 1.974 / 2.070 |
-| Infection Rate | 0.150 | 0.392 | 0.395 |
-| Archi | 26.246 | 27.295 | 27.332 |
-| Echo Chamber Index | 0.8318 | 0.8142 | 0.8131 |
-| Modularity Q | 0.8265 | — | 0.7952 |
-| Belief Polarisation | — | — | 0.2420 |
-| Loss GNN | — | 0.542 | 0.537 |
-
-- **Contagio:** l'infezione cresce da 15% a circa 39% nella prima metà della simulazione e poi entra in un **plateau**: tra lo step 58 e il 95 il numero di infetti varia di appena +16 nodi, mentre ogni step 3–5 suscettibili passano a R. A fine Fase 2 i resistenti (41%) superano gli infetti (39%).
-- **Topologia:** il rewiring guidato dalla GNN è debole (+1.086 archi in 96 step, +4%; nella seconda sessione solo +37) e quasi solo additivo. Gli archi aggiunti sono in prevalenza inter-community, tanto che ECI e Q **diminuiscono** leggermente invece di aumentare.
-
-### Fase 3 — intervento CELF (20 fact-checker)
-
-CELF ha selezionato 20 nodi S (spread stimato in Independent Cascade: 65.9 nodi, 1.3% della rete), iniettati allo step 96 con Infection Rate pari a 0.3948. **Nell'ultima esecuzione `PHASE3_STEPS = 0`**: nessuno step post-intervento è stato simulato, quindi il confronto prima/dopo del notebook mostra delta nulli (l'unica differenza è S → F per i 20 seed). L'effetto dell'intervento sulla dinamica corretta va ancora misurato.
-
-> **Run precedente (prima delle correzioni, non confrontabile):** con 30 step post-intervento l'Infection Rate saliva da 0.5146 a 0.5690. In quella versione però i fact-checker potevano agire solo sugli infetti con ≥25% di vicini F, per cui l'intervento non poteva avere effetto per costruzione, e la Belief Polarisation confrontava due codifiche diverse (+0.418 era un artefatto).
-
-## Conclusioni
-
-1. **La dinamica cognitiva domina su quella strutturale.** Gli agenti LLM determinano quasi tutta l'evoluzione del sistema (transizioni S → I/R), mentre la topologia cambia di pochi punti percentuali. Il "loop chiuso" di co-evoluzione è presente nel codice, ma nei parametri usati il feedback della rete sulla cognizione è debole.
-2. **L'infezione si auto-limita senza intervento.** Partendo dal 15% di pazienti zero, la narrazione raggiunge circa il 40% della rete e poi si stabilizza. Il meccanismo di resistenza attiva (S → R quando l'LLM valuta bassa suscettibilità) fa sì che la maggioranza degli esposti diventi resistente anziché infetta.
-3. **Nessuna formazione di echo chamber strutturali.** Contrariamente all'ipotesi di partenza, il rewiring non rafforza l'omofilia: ECI (0.832 → 0.813) e modularità (0.827 → 0.795) calano. Una parte di questo risultato dipende però da limiti del modello (vedi sotto): ECI è calcolato rispetto alle community *strutturali* fisse della Fase 0, non rispetto alle opinioni, e la generazione dei candidati per il rewiring è distorta.
-4. **L'efficacia del fact-checking resta una domanda aperta.** Con 20 seed (0.4% della rete) lo spread atteso stimato da CELF è dell'1.3% dei nodi: un ordine di grandezza sotto la quota già infetta (39%). È ragionevole attendersi un effetto locale e limitato; per una conclusione quantitativa serve eseguire la Fase 3 con `PHASE3_STEPS > 0` e confrontarla con una run di controllo senza iniezione (stesso seed e stessi step).
+> **Risultati da rigenerare.** Le run precedenti (inclusa quella da 96 step dell'1–2 ottobre 2026) sono state eseguite con versioni del codice che contenevano errori nella dinamica e nelle metriche: candidati del rewiring sempre uguali, soglie dei nodi che cambiavano a ogni ripresa, reach dei fact-checker sempre pari a 1, codifiche delle opinioni incoerenti, Fase 3 senza step post-intervento. L'elenco completo è in `CHANGELOG_FIX.md`. I loro numeri non vanno citati: questa sezione verrà aggiornata con la nuova esecuzione (Fase 2 da 96 step, Fase 3 con fact-checker e di controllo, 30 step ciascuna).
 
 ## Limitazioni e Sviluppi Futuri
 
-**Limiti noti dell'implementazione** (influenzano l'interpretazione dei risultati):
-
-- `src/gnn/trainer.py` → `_generate_candidates` usa `random.Random(self._seed)` con seed fisso: ad ogni step vengono campionati **gli stessi 50 nodi sorgente** per i nuovi archi, quindi il rewiring esplora sempre la stessa piccola porzione di rete (nei log ricorrono gli stessi nodi, ad es. il 4983).
-- `src/agents/state_machine.py` → le soglie LT per nodo sono estratte da un unico RNG nell'ordine di primo accesso e **non sono salvate nel checkpoint**: dopo ogni resume cross-sessione ogni nodo riceve una soglia diversa.
-- `src/influence/metrics.py` → il *Fact-Checker Spread* è la raggiungibilità BFS: su un grafo connesso vale sempre 1.0 (avg reach = 5000) e non misura l'efficacia dell'intervento.
-- **Echo Chamber Index** misura la segregazione rispetto alle community della Fase 0 e non dipende dagli stati degli agenti; per le echo chamber di opinione servirebbe una misura come l'assortatività degli stati (frazione di vicini I tra gli I).
-- **Codifica del belief incoerente:** nella Belief Polarisation R vale 0.5 (vicino a I), mentre negli embedding R spinge nella direzione opposta a I.
-- **CELF** ottimizza lo spread in un modello Independent Cascade diverso dal LT+LLM usato in simulazione; con 30 round Monte Carlo alcuni guadagni marginali risultano negativi (rumore di stima).
-- L'iniezione è manuale: `FactCheckerInjector.should_activate` (`activation_threshold` = 0.4, `celf_interval`) non viene usato dal notebook, e con IR = 0.3948 la soglia non sarebbe stata raggiunta.
-
-**Sviluppi futuri:**
-
-- Eseguire la Fase 3 con 30+ step post-intervento e una run di controllo senza fact-checker, variando budget (20, 100, 250) e momento dell'iniezione (prima del plateau).
-- Correggere i limiti sopra elencati e introdurre una metrica di echo chamber basata sulle opinioni.
-- Integrare **GNN Explainer** per interpretare quali legami guidano il rewiring.
-- Testare LLM e "personalità" degli agenti diverse per valutarne l'effetto sulla velocità di convergenza.
+- **Una sola realizzazione.** Ogni configurazione viene eseguita una volta: con il costo attuale (circa 12 minuti per step) non è possibile ripetere le run con seed diversi. Le differenze piccole tra intervento e controllo vanno lette con cautela.
+- **Ripetibilità dell'LLM.** Il seed per richiesta rende ripetibili le risposte a parità di prompt, ma vLLM non garantisce il determinismo completo con batching variabile.
+- **Obiettivo di selezione miope.** L'obiettivo `threshold` considera l'effetto immediato dei fact-checker sui vicini, non la dinamica futura (ricadute, rewiring, risposte dell'LLM).
+- **Community statiche.** ECI e modularità usano le community della Fase 0; i cambiamenti di opinione sono misurati dalle metriche di assortatività e omofilia.
+- **Scala del modello.** Llama 3 8B quantizzato AWQ è un compromesso dettato dalla GPU disponibile (T4).
+- Sviluppi possibili: **GNN Explainer** per interpretare quali legami guidino la polarizzazione; attivazione più precoce dell'intervento; agenti LLM con "personalità" diverse.
 
 ## Riferimenti
 

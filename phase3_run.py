@@ -7,7 +7,7 @@ Esegui con:
     python phase3_run.py
     python phase3_run.py --config config.yaml
     python phase3_run.py --budget-k 15   (override del budget CELF)
-    python phase3_run.py --no-celf       (solo metriche, senza iniezione)
+    python phase3_run.py --no-celf       (run di CONTROLLO: stessi step, nessun fact-checker)
     python phase3_run.py --steps 5       (step post-intervento)
 
 Flusso:
@@ -149,7 +149,8 @@ def main(args: argparse.Namespace) -> None:
     # 5. Step post-intervento
     # -------------------------------------------------------
     logger.info("\n[5/5] Esecuzione %d step post-intervento...", n_post_steps)
-    orch._phase = "3"  # Marca i prossimi step come Fase 3 nel CSV
+    # Marca i prossimi step nel CSV: "3" = intervento, "3_control" = controllo
+    orch._phase = "3_control" if args.no_celf else "3"
     # FIX: next_step e' gia' il primo step non eseguito (prima +1 saltava uno step)
     orch.run(n_steps=n_post_steps, start_step=orch.next_step)
     orch.close()
@@ -167,6 +168,8 @@ def main(args: argparse.Namespace) -> None:
         baseline_metrics=baseline_metrics,
         cfg=cfg,
     )
+    report["control_run"] = bool(args.no_celf)
+    report["celf_objective"] = cfg.influence.celf_objective
     report["celf_seeds"] = celf_seeds
     report["injected_nodes"] = injected_nodes
     report["n_post_steps"] = n_post_steps
@@ -186,6 +189,8 @@ def main(args: argparse.Namespace) -> None:
         ("Echo Chamber Idx",   "echo_chamber_index",  "%.4f"),
         ("Modularity Q",       "modularity_q",        "%.4f"),
         ("Belief Polarisation","belief_polarisation",  "%.4f"),
+        ("Opinion Homophily",  "opinion_homophily",   "%.4f"),
+        ("Belief Assort.",     "belief_assortativity", "%.4f"),
         ("Nodi S",             "n_S",                 "%d"),
         ("Nodi I",             "n_I",                 "%d"),
         ("Nodi R",             "n_R",                 "%d"),
@@ -210,14 +215,16 @@ def main(args: argparse.Namespace) -> None:
 
     logger.info("-" * 65)
     logger.info(
-        "Fact-Checker Spread (FCS) : %.4f  (%.0f%% dei nodi raggiungibili)",
+        "FC reach (entro %d salti): %.4f | copertura efficace: %.4f",
+        cfg.influence.reach_hops,
         report.get("fcs", 0.0),
-        report.get("fcs", 0.0) * 100,
+        report.get("fc_effective_coverage", 0.0),
     )
     logger.info("=" * 60)
 
     # Salva JSON
-    report_path = cfg.project_root / cfg.paths.results / "phase3_report.json"
+    report_path = cfg.project_root / cfg.paths.results / (
+        "phase3_report_control.json" if args.no_celf else "phase3_report.json")
     serializable_report = {
         k: v for k, v in report.items()
         if isinstance(v, (int, float, str, list, dict, bool, type(None)))

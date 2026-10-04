@@ -65,7 +65,13 @@ class Rewirer:
         self._threshold_add = cfg.gnn.rewire_threshold_add
         self._threshold_remove = cfg.gnn.rewire_threshold_remove
         self._max_add = cfg.gnn.max_new_edges_per_step
-        self._max_remove = max(1, cfg.gnn.max_new_edges_per_step // 2)
+        self._mode = getattr(cfg.gnn, "rewire_mode", "swap")
+        if self._mode not in ("swap", "threshold"):
+            raise ValueError(f"gnn.rewire_mode non valido: {self._mode!r}")
+        self._max_remove = (
+            cfg.gnn.max_new_edges_per_step if self._mode == "swap"
+            else max(1, cfg.gnn.max_new_edges_per_step // 2)
+        )
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -99,27 +105,6 @@ class Rewirer:
         existing_edges = set(G.edges())
         states = agent_states or {}
 
-        # --- Archi da rimuovere ---
-        removal_candidates = [
-            (pair, score) for pair, score in link_scores.items()
-            if pair in existing_edges and score < self._threshold_remove
-        ]
-        removal_candidates.sort(key=lambda x: x[1])  # Score più basso prima
-
-        to_remove: list[tuple[int, int]] = []
-        # FIX: traccia il grado residuo durante la selezione, altrimenti piu'
-        # rimozioni nello stesso step possono isolare un nodo (il controllo
-        # usava sempre il grado iniziale di G).
-        residual_degree: dict[int, int] = {}
-        for (u, v), score in removal_candidates:
-            if len(to_remove) >= self._max_remove:
-                break
-            if not self._is_safe_removal(u, v, G, states, residual_degree):
-                continue
-            to_remove.append((u, v))
-            residual_degree[u] = residual_degree.get(u, G.degree(u)) - 1
-            residual_degree[v] = residual_degree.get(v, G.degree(v)) - 1
-
         # --- Archi da aggiungere ---
         addition_candidates = [
             (pair, score) for pair, score in link_scores.items()
@@ -137,11 +122,51 @@ class Rewirer:
                 continue
             to_add.append((u, v))
 
+        # --- Archi da rimuovere ---
+        # Modalita' "threshold": rimuove solo archi con score < soglia (in
+        #   pratica mai: il link predictor e' addestrato sugli archi esistenti
+        #   e assegna loro score alti).
+        # Modalita' "swap" (default): per ogni arco aggiunto rimuove l'arco
+        #   esistente con lo score piu' basso -> rewiring a densita' costante,
+        #   come nei modelli co-evolutivi classici (es. Holme-Newman).
+        existing_scored = [
+            (pair, score) for pair, score in link_scores.items()
+            if pair in existing_edges
+        ]
+        existing_scored.sort(key=lambda x: x[1])  # Score più basso prima
+        if self._mode == "swap":
+            n_target = max(
+                len(to_add),
+                sum(1 for _, sc in existing_scored if sc < self._threshold_remove),
+            )
+            removal_candidates = existing_scored
+        else:
+            removal_candidates = [
+                (pair, sc) for pair, sc in existing_scored if sc < self._threshold_remove
+            ]
+            n_target = len(removal_candidates)
+        n_target = min(n_target, self._max_remove)
+
+        added_set = {(min(u, v), max(u, v)) for u, v in to_add}
+        to_remove: list[tuple[int, int]] = []
+        # Grado residuo tracciato durante la selezione: piu' rimozioni nello
+        # stesso step non devono isolare un nodo.
+        residual_degree: dict[int, int] = {}
+        for (u, v), score in removal_candidates:
+            if len(to_remove) >= n_target:
+                break
+            if (min(u, v), max(u, v)) in added_set:
+                continue
+            if not self._is_safe_removal(u, v, G, states, residual_degree):
+                continue
+            to_remove.append((u, v))
+            residual_degree[u] = residual_degree.get(u, G.degree(u)) - 1
+            residual_degree[v] = residual_degree.get(v, G.degree(v)) - 1
+
         if to_add or to_remove:
             logger.info(
-                "[Rewirer] Proposed: +%d archi (thr=%.2f), -%d archi (thr=%.2f)",
-                len(to_add), self._threshold_add,
-                len(to_remove), self._threshold_remove,
+                "[Rewirer] Proposed (%s): +%d archi (thr=%.2f), -%d archi",
+                self._mode, len(to_add), self._threshold_add, len(to_remove),
             )
 
         return to_add, to_remove

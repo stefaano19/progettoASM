@@ -131,6 +131,7 @@ class StateMachine:
         resistance_susceptibility_cutoff: float = 0.5,
         fc_protection_threshold: float = 0.10,
     ) -> None:
+        self._seed = seed
         self._rng = random.Random(seed)
         self._base_threshold_mean = base_threshold_mean
         self._base_threshold_std = base_threshold_std
@@ -163,11 +164,17 @@ class StateMachine:
 
     def get_threshold(self, node_id: int) -> float:
         """
-        Soglia base per il nodo, assegnata una volta e poi fissa.
+        Soglia base per il nodo, fissa per tutta la simulazione.
         Campionata da N(mean, std) e clippata in [0.05, 0.95].
+
+        FIX: prima le soglie venivano estratte da un unico generatore
+        nell'ordine in cui i nodi venivano interrogati e non erano salvate nel
+        checkpoint: a ogni resume ogni nodo riceveva una soglia diversa. Ora la
+        soglia dipende solo da (seed, node_id): identica in ogni sessione.
         """
         if node_id not in self._node_thresholds:
-            raw = self._rng.gauss(
+            node_rng = random.Random(self._seed * 1_000_003 + node_id)
+            raw = node_rng.gauss(
                 self._base_threshold_mean,
                 self._base_threshold_std,
             )

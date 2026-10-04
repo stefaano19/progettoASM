@@ -160,6 +160,9 @@ class GNNConfig:
     max_new_edges_per_step: int = 10
     embedding_file: str = "data/processed/embeddings.npy"
     use_torch: bool = False
+    rewire_mode: str = "swap"                 # "swap" (densita' costante) | "threshold"
+    rewire_candidate_sources: int = 500       # nodi sorgente esplorati per step
+    rewire_candidates_per_source: int = 5     # coppie 2-hop candidate per sorgente
 
 
 @dataclass
@@ -171,6 +174,8 @@ class InfluenceConfig:
     # Effetto dei fact-checker (F) nella StateMachine
     fc_resistance_threshold: float = 0.25   # I -> R se frazione vicini F >= soglia
     fc_protection_threshold: float = 0.10   # S -> R se frazione vicini F >= soglia
+    celf_objective: str = "threshold"       # "threshold" (allineato) | "ic"
+    reach_hops: int = 1                     # raggio della metrica di reach F
 
 
 # ---------------------------------------------------------------------------

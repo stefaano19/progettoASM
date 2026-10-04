@@ -6,14 +6,17 @@ Metriche di valutazione dell'intervento Fact-Checker (Fase 3).
 Metriche calcolate
 ------------------
   FCS (Fact-Checker Spread):
-    Frazione di nodi del grafo raggiungibili dai nodi F in BFS.
-    Misura la "copertura potenziale" dei fact-checker.
+    Frazione di nodi non-F entro `reach_hops` salti da almeno un F.
+
+  fc_effective_coverage:
+    Frazione di nodi non-F su cui la pressione dei fact-checker supera le
+    soglie della StateMachine (quindi in grado di produrre transizioni).
 
   n_fact_checkers:
     Numero di nodi correntemente in stato 'F'.
 
   avg_reach_per_fc:
-    Media dei nodi raggiungibili per singolo fact-checker.
+    Media dei nodi entro `reach_hops` salti per singolo fact-checker.
 
   delta_infection_rate, delta_echo_chamber_index, ...:
     Differenza (corrente - baseline) per ogni metrica topologica.
@@ -47,56 +50,70 @@ logger = logging.getLogger(__name__)
 def compute_fact_checker_spread(
     G: nx.Graph,
     agent_states: dict[int, str],
+    max_hops: int = 1,
+    protection_threshold: float = 0.10,
+    resistance_threshold: float = 0.25,
 ) -> dict[str, float]:
     """
-    Calcola la copertura potenziale dei nodi Fact-Checker (stato 'F').
+    Copertura dei nodi Fact-Checker (stato 'F').
 
-    La "copertura" e' definita come il numero di nodi raggiungibili
-    dai nodi F tramite BFS (componente connessa contenente almeno un F).
+    FIX: prima si contavano i nodi raggiungibili SENZA limite di distanza:
+    su una rete connessa il valore era sempre 1.0 (5000/5000) e non misurava
+    nulla. Ora:
 
-    Parameters
-    ----------
-    G : nx.Graph
-        Grafo corrente (post-rewiring).
-    agent_states : dict[int, str]
-        Stati agenti {node_id: "S"|"I"|"R"|"F"}.
-
-    Returns
-    -------
-    dict con:
-      - fcs (float): frazione di nodi raggiungibili da almeno un F [0, 1]
-      - n_fact_checkers (int): numero di nodi F
-      - avg_reach_per_fc (float): nodi raggiungibili in media per F
-      - total_reachable (int): nodi unici raggiungibili da tutti gli F
+      - fcs / avg_reach_per_fc / total_reachable: nodi entro `max_hops` salti
+        da almeno un F (default 1 = vicinato diretto, l'unico che la
+        StateMachine considera).
+      - fc_effective_coverage: frazione di nodi non-F su cui la pressione F
+        supera la soglia della StateMachine (S con frazione F >= soglia di
+        protezione e >= frazione I; I con frazione F >= soglia di resistenza).
+        E' la copertura che puo' davvero produrre transizioni.
     """
+    empty = {"fcs": 0.0, "n_fact_checkers": 0, "avg_reach_per_fc": 0.0,
+             "total_reachable": 0, "fc_effective_coverage": 0.0, "fc_effective_nodes": 0}
     n = G.number_of_nodes()
     if n == 0:
-        return {"fcs": 0.0, "n_fact_checkers": 0, "avg_reach_per_fc": 0.0, "total_reachable": 0}
+        return empty
 
-    fc_nodes = [node for node, state in agent_states.items() if state == "F"]
+    fc_nodes = [node for node, state in agent_states.items() if state == "F" and node in G]
     n_fc = len(fc_nodes)
-
     if n_fc == 0:
-        return {"fcs": 0.0, "n_fact_checkers": 0, "avg_reach_per_fc": 0.0, "total_reachable": 0}
+        return empty
 
-    # BFS da ogni fact-checker
     reach_per_fc: list[int] = []
     all_reachable: set[int] = set()
-
     for fc in fc_nodes:
-        if fc not in G:
-            continue
-        reachable = set(nx.single_source_shortest_path_length(G, fc).keys())
+        reachable = set(nx.single_source_shortest_path_length(G, fc, cutoff=max_hops))
+        reachable.discard(fc)
         reach_per_fc.append(len(reachable))
         all_reachable.update(reachable)
+    all_reachable.difference_update(fc_nodes)
 
+    # Copertura efficace (stesse regole della StateMachine)
+    fc_set = set(fc_nodes)
+    effective = 0
+    for u in {nb for fc in fc_nodes for nb in G.neighbors(fc)} - fc_set:
+        deg = G.degree(u)
+        if deg == 0:
+            continue
+        st = agent_states.get(u, "S")
+        n_f = sum(1 for w in G.neighbors(u) if w in fc_set)
+        n_i = sum(1 for w in G.neighbors(u) if agent_states.get(w) == "I")
+        frac_f, frac_i = n_f / deg, n_i / deg
+        if st == "S" and frac_f >= protection_threshold and frac_f >= frac_i:
+            effective += 1
+        elif st == "I" and frac_f >= resistance_threshold:
+            effective += 1
+
+    n_non_f = max(n - n_fc, 1)
     total_reachable = len(all_reachable)
-    fcs = total_reachable / n
+    fcs = total_reachable / n_non_f
     avg_reach = float(np.mean(reach_per_fc)) if reach_per_fc else 0.0
 
     logger.info(
-        "[InfluenceMetrics] FCS=%.3f | n_FC=%d | avg_reach=%.1f | total_reach=%d/%d",
-        fcs, n_fc, avg_reach, total_reachable, n,
+        "[InfluenceMetrics] FCS(%d-hop)=%.3f | n_FC=%d | avg_reach=%.1f | "
+        "copertura efficace=%d (%.3f)",
+        max_hops, fcs, n_fc, avg_reach, effective, effective / n_non_f,
     )
 
     return {
@@ -104,6 +121,8 @@ def compute_fact_checker_spread(
         "n_fact_checkers": n_fc,
         "avg_reach_per_fc": avg_reach,
         "total_reachable": total_reachable,
+        "fc_effective_coverage": effective / n_non_f,
+        "fc_effective_nodes": effective,
     }
 
 
@@ -206,7 +225,13 @@ def compute_full_influence_report(
     current_metrics["n_F"] = state_counts["F"]
 
     # Spread dei fact-checker
-    fcs_metrics = compute_fact_checker_spread(G, agent_states)
+    inf_cfg = cfg.influence
+    fcs_metrics = compute_fact_checker_spread(
+        G, agent_states,
+        max_hops=getattr(inf_cfg, "reach_hops", 1),
+        protection_threshold=getattr(inf_cfg, "fc_protection_threshold", 0.10),
+        resistance_threshold=getattr(inf_cfg, "fc_resistance_threshold", 0.25),
+    )
 
     # Delta
     delta_metrics = compute_intervention_delta(baseline_metrics, current_metrics)

@@ -234,7 +234,7 @@ class _GeminiBackend:
         self._temperature = cfg.get("temperature", 0.7)
         self._max_tokens = cfg.get("max_tokens", 512)
 
-    def chat(self, messages: list[dict]) -> LLMResponse:
+    def chat(self, messages: list[dict], seed: int | None = None) -> LLMResponse:
         system_parts = [m["content"] for m in messages if m["role"] == "system"]
         history_msgs = [m for m in messages if m["role"] != "system"]
 
@@ -294,7 +294,7 @@ class _OpenAICompatibleBackend:
         self._temperature = cfg.get("temperature", 0.7)
         self._max_tokens = cfg.get("max_tokens", 512)
 
-    def chat(self, messages: list[dict]) -> LLMResponse:
+    def chat(self, messages: list[dict], seed: int | None = None) -> LLMResponse:
         t0 = time.perf_counter()
         resp = self._client.chat.completions.create(
             model=self._model,
@@ -303,6 +303,9 @@ class _OpenAICompatibleBackend:
             max_tokens=self._max_tokens,
             timeout=None,
             response_format={"type": "json_object"},
+            # Seed per richiesta: a parita' di prompt vLLM campiona la stessa
+            # risposta -> run confrontabili (es. intervento vs controllo).
+            seed=seed,
         )
         latency = time.perf_counter() - t0
         choice = resp.choices[0]
@@ -377,7 +380,10 @@ class LLMClient:
         last_exc: Exception | None = None
         for attempt in range(self._max_retries):
             try:
-                response = self._backend.chat(messages)
+                # Seed derivato dal prompt (+ tentativo, cosi' un retry dopo un
+                # output non valido non ripete lo stesso campionamento).
+                req_seed = (int(msg_hash[:8], 16) + attempt) % (2**31 - 1)
+                response = self._backend.chat(messages, seed=req_seed)
                 TokenBudget.record(response.input_tokens, response.output_tokens)
                 
                 # BUG FIX: Validiamo il JSON PRIMA di salvare in cache.

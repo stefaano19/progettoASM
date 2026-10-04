@@ -43,10 +43,18 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Codifica numerica degli stati per le metriche di belief.
 # UNICA fonte di verita': usata sia da get_belief_map() (Fase 2 / pre-intervento)
-# sia da compute_full_influence_report() (post-intervento). Prima i due punti
-# usavano codifiche diverse e il delta di Belief Polarisation era un artefatto.
+# sia da compute_full_influence_report() (post-intervento).
+#
+#   S =  0  neutrale (non ha preso posizione)
+#   I = +1  crede alla disinformazione
+#   R = -1  la rifiuta
+#   F = -1  la contrasta attivamente
+#
+# FIX: prima R valeva +0.5, cioe' "a meta' strada verso I", mentre negli
+# embedding R viene spinto nella direzione OPPOSTA a I. Ora le due
+# rappresentazioni sono coerenti: R ed F stanno dalla parte opposta di I.
 # ---------------------------------------------------------------------------
-STATE_TO_BELIEF: dict[str, float] = {"S": 0.0, "I": 1.0, "R": 0.5, "F": -0.5}
+STATE_TO_BELIEF: dict[str, float] = {"S": 0.0, "I": 1.0, "R": -1.0, "F": -1.0}
 BELIEF_RANGE: tuple[float, float] = (
     min(STATE_TO_BELIEF.values()),
     max(STATE_TO_BELIEF.values()),

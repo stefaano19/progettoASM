@@ -116,7 +116,11 @@ gnn:
   embedding_dim:      128
   rewire_threshold_add:    0.65      # score > soglia -> aggiungi arco
   rewire_threshold_remove: 0.35      # score < soglia -> rimuovi arco
-  max_new_edges_per_step:  200
+  max_new_edges_per_step:  50        # in modalita' swap: archi sostituiti per step
+  rewire_mode:        "swap"         # swap = ogni arco aggiunto sostituisce l'esistente con score minimo
+                                     # threshold = vecchio comportamento (rimozioni solo sotto soglia)
+  rewire_candidate_sources:     500  # nodi sorgente esplorati a ogni step (diversi per step)
+  rewire_candidates_per_source: 5    # coppie 2-hop candidate per sorgente
   embedding_file:     "data/processed/embeddings.npy"
   use_torch:          true           # true = PyTorch (Kaggle/GPU), false = NumPy (locale)
 
@@ -125,7 +129,10 @@ gnn:
 # ---------------------------------------------------------------------------
 influence:
   budget_k:           20             # numero seed fact-checker da iniettare
-  simulation_rounds:  30            # Monte Carlo per stima spread
+  simulation_rounds:  30            # Monte Carlo per stima spread (solo celf_objective = "ic")
+  celf_objective:     "threshold"    # threshold = obiettivo allineato alla StateMachine (deterministico)
+                                     # ic = Independent Cascade Monte Carlo (modello originale)
+  reach_hops:         1              # raggio (in salti) della metrica di reach dei fact-checker
   activation_threshold: 0.4         # soglia infection_rate per attivare CELF
   celf_interval:      15             # ogni quanti step riesegui CELF
   fc_resistance_threshold: 0.25      # I -> R se frazione vicini F >= soglia

@@ -18,11 +18,23 @@ Complexity:
     where k is the budget size, R is the number of Monte Carlo rounds, n is the number of nodes,
     and m is the number of edges.
 
-Diffusion Model
----------------
-Uses the Independent Cascade (IC) model:
-  - Each edge (u, v) has an activation probability inversely proportional to the degree of v.
-  - Starts from a seed set S and propagates until no new activations occur.
+Objective (cfg.influence.celf_objective)
+----------------------------------------
+"threshold" (default)
+    Funzione obiettivo allineata alla StateMachine della simulazione: conta i
+    nodi su cui la pressione dei fact-checker supera le soglie che producono
+    davvero una transizione (S -> R se frazione F >= fc_protection_threshold e
+    >= frazione I; I -> R se frazione F >= fc_resistance_threshold).
+    E' deterministica (niente Monte Carlo, niente guadagni negativi da rumore).
+    Poiche' una funzione a soglia non e' submodulare, la valutazione lazy di
+    CELF non e' garantita: si usa il greedy completo, che qui costa poco
+    perche' il guadagno di un nodo dipende solo dal suo vicinato.
+
+"ic"
+    Independent Cascade con probabilita' 1/deg(v) (modello originale), stimato
+    con Monte Carlo e selezione lazy-greedy CELF. Usa common random numbers
+    (stesso generatore per S e S+{v}) e guadagni troncati a 0, cosi' il rumore
+    non produce guadagni marginali negativi.
 """
 
 from __future__ import annotations
@@ -55,6 +67,11 @@ class CELF:
         self._cfg = cfg
         self._random_seed = cfg.execution.random_seed
         self._simulation_rounds = cfg.influence.simulation_rounds
+        self._objective = getattr(cfg.influence, "celf_objective", "threshold")
+        if self._objective not in ("threshold", "ic"):
+            raise ValueError(f"influence.celf_objective non valido: {self._objective!r}")
+        self._prot_thr = getattr(cfg.influence, "fc_protection_threshold", 0.10)
+        self._res_thr = getattr(cfg.influence, "fc_resistance_threshold", 0.25)
 
     def select(
         self,
@@ -100,6 +117,10 @@ class CELF:
             return []
 
         target_seed_count = min(target_seed_count, len(candidates))
+
+        if self._objective == "threshold":
+            return self._select_threshold(graph, candidates, current_states, target_seed_count)
+
         logger.info(
             "[CELF] Starting seed selection: target_seeds=%d | candidates=%d | simulation_rounds=%d",
             target_seed_count, len(candidates), self._simulation_rounds,
@@ -148,6 +169,17 @@ class CELF:
         for iteration_idx in range(target_seed_count):
             if not marginal_gain_heap:
                 break
+            # Spread del set corrente: calcolato una sola volta per iterazione,
+            # con lo stesso seed usato per i candidati (common random numbers).
+            iteration_seed = self._random_seed * 1_000_003 + iteration_idx
+            base_spread = self._simulate_spread(
+                graph=graph,
+                seeds=selected_seeds,
+                agent_states=current_states,
+                simulation_rounds=self._simulation_rounds,
+                activation_probabilities=activation_probabilities,
+                random_generator=random.Random(iteration_seed),
+            )
 
             while True:
                 negative_marginal_gain, last_updated_iteration, current_node = heapq.heappop(marginal_gain_heap)
@@ -162,21 +194,16 @@ class CELF:
                     break
                 else:
                     # Re-evaluate the marginal gain relative to the currently selected seeds
-                    base_spread = self._simulate_spread(
-                        graph=graph,
-                        seeds=selected_seeds,
-                        agent_states=current_states,
-                        simulation_rounds=self._simulation_rounds,
-                        activation_probabilities=activation_probabilities,
-                    )
                     candidate_spread = self._simulate_spread(
                         graph=graph,
                         seeds=selected_seeds + [current_node],
                         agent_states=current_states,
                         simulation_rounds=self._simulation_rounds,
                         activation_probabilities=activation_probabilities,
+                        random_generator=random.Random(iteration_seed),
                     )
-                    marginal_gain = candidate_spread - base_spread
+                    # Lo spread IC e' monotono: un guadagno negativo e' solo rumore
+                    marginal_gain = max(0.0, candidate_spread - base_spread)
                     heapq.heappush(marginal_gain_heap, (-marginal_gain, iteration_idx, current_node))
 
         logger.info("[CELF] Selected seeds: %s", selected_seeds)
@@ -242,13 +269,96 @@ class CELF:
 
         return total_activated_nodes / simulation_rounds
 
+    # ------------------------------------------------------------------
+    # Obiettivo "threshold" (allineato alla StateMachine)
+    # ------------------------------------------------------------------
+
+    def _is_covered(self, state: str, n_f: int, n_i: int, deg: int) -> bool:
+        if deg == 0 or n_f == 0:
+            return False
+        frac_f, frac_i = n_f / deg, n_i / deg
+        if state == "S":
+            return frac_f >= self._prot_thr and frac_f >= frac_i
+        if state == "I":
+            return frac_f >= self._res_thr
+        return False
+
+    def _threshold_counts(self, graph, agent_states, f_set):
+        deg = dict(graph.degree())
+        n_i = {u: sum(1 for w in graph.neighbors(u) if agent_states.get(w, "S") == "I")
+               for u in graph.nodes()}
+        n_f = {u: sum(1 for w in graph.neighbors(u) if w in f_set) for u in graph.nodes()}
+        return deg, n_i, n_f
+
+    def _threshold_objective(self, graph, agent_states, seeds) -> int:
+        f_set = {u for u, st in agent_states.items() if st == "F"} | set(seeds)
+        deg, n_i, n_f = self._threshold_counts(graph, agent_states, f_set)
+        return sum(
+            1 for u in graph.nodes()
+            if u not in f_set
+            and self._is_covered(agent_states.get(u, "S"), n_f[u], n_i[u], deg[u])
+        )
+
+    def _select_threshold(self, graph, candidates, agent_states, k) -> list[int]:
+        logger.info(
+            "[CELF] Starting seed selection: objective=threshold (greedy esatto) | "
+            "target_seeds=%d | candidates=%d | soglie S->R=%.2f I->R=%.2f",
+            k, len(candidates), self._prot_thr, self._res_thr,
+        )
+        f_set = {u for u, st in agent_states.items() if st == "F"}
+        deg, n_i, n_f = self._threshold_counts(graph, agent_states, f_set)
+        nbrs = {u: list(graph.neighbors(u)) for u in graph.nodes()}
+        remaining = set(candidates)
+        selected: list[int] = []
+
+        for it in range(k):
+            best_key, best_node = None, None
+            for v in remaining:
+                gain = 0
+                potential = 0.0
+                for u in nbrs[v]:
+                    if u in f_set:
+                        continue
+                    st = agent_states.get(u, "S")
+                    before = self._is_covered(st, n_f[u], n_i[u], deg[u])
+                    after = self._is_covered(st, n_f[u] + 1, n_i[u], deg[u])
+                    gain += int(after) - int(before)
+                    if st in ("S", "I") and not after:
+                        potential += 1.0 / max(deg[u], 1)
+                # v diventa F: se era gia' coperto esce dal conteggio
+                if self._is_covered(agent_states.get(v, "S"), n_f[v], n_i[v], deg[v]):
+                    gain -= 1
+                # Tie-break: progresso verso le soglie, poi id piu' basso
+                key = (gain, potential, -v)
+                if best_key is None or key > best_key:
+                    best_key, best_node = key, v
+            if best_node is None:
+                break
+            selected.append(best_node)
+            remaining.discard(best_node)
+            f_set.add(best_node)
+            for u in nbrs[best_node]:
+                n_f[u] += 1
+            logger.info(
+                "[CELF] Iteration %d/%d: Selected node %d (nodi coperti in piu' = %d)",
+                it + 1, k, best_node, best_key[0],
+            )
+
+        logger.info("[CELF] Selected seeds: %s", selected)
+        return selected
+
     def estimate_spread(
         self,
         graph: "nx.Graph",
         seeds: list[int],
         agent_states: dict[int, str] | None = None,
     ) -> float:
-        """Estimates the expected influence spread starting from a set of seed nodes."""
+        """
+        Spread atteso dei seed secondo l'obiettivo configurato:
+        "threshold" -> nodi coperti (deterministico); "ic" -> stima Monte Carlo.
+        """
+        if self._objective == "threshold":
+            return float(self._threshold_objective(graph, agent_states or {}, seeds))
         random_generator = random.Random(self._random_seed)
         activation_probabilities: dict[tuple[int, int], float] = {}
         for source_node, target_node in graph.edges():

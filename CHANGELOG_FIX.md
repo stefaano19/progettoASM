@@ -47,3 +47,49 @@ python phase3_run.py --no-mock-llm ...
 ```
 
 Su Kaggle: rieseguire `notebooks/kaggle_full_run.ipynb`. I checkpoint vecchi restano compatibili: al resume gli agenti vengono ora ricostruiti dallo stato salvato.
+
+---
+
+# Seconda revisione
+
+Dopo questa revisione **la Fase 2 va rieseguita da zero**: le correzioni 1, 2 e 5 cambiano la dinamica della simulazione. I checkpoint e i risultati delle run precedenti non sono più validi. Test: 94 (tutti verdi). Verificato end-to-end con LLM mock: Fase 2 → resume → Fase 3 con fact-checker e Fase 3 di controllo dallo stesso checkpoint → `scripts/compare_phase3.py`; eseguite anche le celle di Fase 3 del notebook in entrambe le modalità.
+
+## Dinamica della simulazione
+
+**1. Candidati del rewiring sempre uguali** — `src/gnn/trainer.py`
+`_generate_candidates` ricreava `random.Random(self._seed)` a ogni chiamata: ogni step esplorava gli stessi 50 nodi sorgente e si fermava a 200 candidati, favorendo i primi. Ora il seed dipende dallo step, le sorgenti sono 500 (`gnn.rewire_candidate_sources`) e ogni sorgente propone al massimo 5 coppie (`gnn.rewire_candidates_per_source`).
+
+**2. Il rewiring non rimuoveva mai archi** — `src/gnn/rewirer.py`
+Il link predictor è addestrato sugli archi esistenti e assegna loro score alti, quindi nessuno scendeva sotto la soglia di rimozione: la rete si densificava e basta. Nuova modalità `gnn.rewire_mode: swap` (default): ogni arco aggiunto sostituisce l'arco esistente con lo score più basso, a densità costante. `max_new_edges_per_step` passa da 200 a 50 (circa 4.800 sostituzioni su 96 step, ≈ 18% degli archi). La vecchia logica resta disponibile con `rewire_mode: threshold`.
+
+**3. Soglie dei nodi che cambiavano a ogni resume** — `src/agents/state_machine.py`
+Le soglie erano estratte da un unico generatore nell'ordine in cui i nodi venivano interrogati e non erano salvate nel checkpoint. Ora la soglia dipende solo da (seed, id del nodo): identica in ogni sessione.
+
+**4. Seed per richiesta all'LLM** — `src/agents/llm_client.py`
+Ogni richiesta a vLLM usa un seed derivato dal prompt: a parità di prompt la risposta è la stessa, quindi la run con fact-checker e quella di controllo differiscono solo dove l'intervento cambia il contesto degli agenti.
+
+**5. Selezione dei seed allineata alla simulazione** — `src/influence/celf.py`
+CELF ottimizzava una cascata Independent Cascade, diversa dalle regole della simulazione, e con 30 round Monte Carlo produceva guadagni marginali negativi (−2.97, −2.07). Nuovo obiettivo `influence.celf_objective: threshold` (default): numero di nodi su cui la pressione dei fact-checker supera le soglie della StateMachine. È deterministico; poiché una funzione a soglia non è submodulare si usa il greedy completo (costo trascurabile). L'obiettivo `ic` resta disponibile, ora con common random numbers e guadagni troncati a 0.
+
+## Metriche
+
+**6. Reach dei fact-checker sempre 1.0** — `src/influence/metrics.py`
+Contava i nodi raggiungibili senza limite di distanza: su una rete connessa valeva sempre 5000/5000. Ora conta i nodi entro `influence.reach_hops` salti (default 1). Nuova metrica `fc_effective_coverage`: frazione di nodi su cui la pressione F supera le soglie di transizione.
+
+**7. Echo chamber sulle opinioni** — `src/graph/metrics.py`
+L'ECI misura solo quanto gli archi restano nelle community della Fase 0 e non può rilevare echo chamber ideologiche. Nuove metriche `opinion_homophily` e `belief_assortativity`, registrate anche nel CSV e nel log di ogni step.
+
+**8. Codifica delle opinioni** — `src/graph/network_manager.py`
+R valeva +0.5 ("a metà strada verso I") mentre negli embedding R è spinto nella direzione opposta a I. Nuova codifica: S = 0, I = +1, R = F = −1.
+
+## Notebook e script
+
+- Nuovo parametro `CONTROL_RUN` per la Fase 3 di controllo (report `phase3_report_control.json`, etichetta `3_control` nel CSV). Nello script: `phase3_run.py --no-celf`.
+- Nuovo `scripts/compare_phase3.py`: effetto dell'intervento = run con fact-checker − controllo.
+- Soglia di attivazione `influence.activation_threshold` ora controllata nel notebook; `FORCE_INJECTION` permette di iniettare comunque e lo registra nel report.
+- Con `PHASE3_STEPS = 0` (sessioni intermedie di Fase 2) il notebook non esegue più CELF e iniezione.
+- Riepilogo: step totali di Fase 2 (non solo dell'ultima sessione) e modello LLM effettivamente usato (prima indicava "api").
+- Celle markdown: riferimenti a Ollama sostituiti con vLLM.
+- Cella 8: parametro `VLLM_TENSOR_PARALLEL` (2 = usa entrambe le T4).
+- Valori di default della cella 10 riportati a una run nuova (`RESUME_FROM_CKPT = False`, nessun checkpoint precedente).
+- README: numero di archi del dataset corretto (967.632, non ~1,2 milioni), descrizione di rewiring, selezione dei seed e metriche, piano delle sessioni, risultati obsoleti rimossi.
