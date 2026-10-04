@@ -19,6 +19,7 @@ Repository: [`github.com/stefaano19/progettoASM`](https://github.com/stefaano19/
 - [Esecuzione della Pipeline](#esecuzione-della-pipeline)
 - [Le Quattro Fasi](#le-quattro-fasi)
 - [Risultati Principali](#risultati-principali)
+- [Conclusioni](#conclusioni)
 - [Limitazioni e Sviluppi Futuri](#limitazioni-e-sviluppi-futuri)
 - [Riferimenti](#riferimenti)
 
@@ -60,7 +61,7 @@ Il ciclo si chiude in 6 passaggi: gli agenti generano opinioni che perturbano gl
 | Modello LLM | `casperhansen/llama-3-8b-instruct-awq` | Quantizzato AWQ, compatibile con GPU T4 (15 GB VRAM) |
 | Modello di diffusione | Linear Threshold (LT) esteso, modulato dall'LLM | Dinamica di contagio dell'opinione/stato |
 | Influence Maximization | **CELF** (Cost-Effective Lazy Forward) | Selezione submodulare dei nodi seed per il fact-checking |
-| Dataset | `ogbl-collab` (Open Graph Benchmark) | Rete di co-autoraggio accademico, ~235k nodi / ~1.2M archi |
+| Dataset | `ogbl-collab` (Open Graph Benchmark) | Rete di co-autoraggio accademico, 235.868 nodi / 967.632 archi (non orientati, deduplicati) |
 
 ## Struttura del Progetto
 
@@ -104,8 +105,6 @@ progettoASM/
 └── results/                   # Generati a runtime: metrics_history.csv,
                                # phase2_report.json, phase3_report.json, checkpoints/
 ```
-
-> La struttura sopra riflette i moduli descritti nella relazione tecnica del progetto; verificane i percorsi esatti nel repository, che potrebbero differire leggermente.
 
 ## Installazione
 
@@ -173,40 +172,67 @@ Seleziona tramite l'algoritmo **CELF** i nodi ottimali per massimizzare la diffu
 
 ## Risultati Principali
 
-> **Nota:** i valori sotto sono stati ottenuti prima delle correzioni descritte in
-> `CHANGELOG_FIX.md` (resume degli agenti, codifica della Belief Polarisation,
-> direzione degli embedding, effetto dei fact-checker). Vanno rigenerati
-> rieseguendo la pipeline prima di essere citati.
+I valori seguenti provengono dall'ultima esecuzione di `notebooks/kaggle_full_run.ipynb` (LLM reale `llama-3-8b-instruct-awq` su vLLM, seed 42), successiva alle correzioni di `CHANGELOG_FIX.md`. La Fase 2 è stata eseguita in due sessioni Kaggle (step 0–57, poi resume da `ckpt_step_0057.pkl` per gli step 58–95). Parametri effettivi (override del notebook): 15% di pazienti zero (750 nodi), 15% di nodi attivati per step, rewiring ogni 2 step.
 
 ### Baseline (Fase 0, step 0)
 
-| Metrica | Valore |
-|---|---|
-| Nodi / Archi | 5.000 / 26.246 |
-| Densità | 0.0021 |
-| Grado medio | 10.50 |
-| Clustering medio | 0.6988 |
-| Modularity Q | 0.8265 |
-| Echo Chamber Index | 0.8318 |
+| Metrica | Grafo originale (LCC) | Sottografo (Forest Fire) |
+|---|---|---|
+| Nodi / Archi | 232.865 / 961.883 | 5.000 / 26.246 |
+| Grado medio | 8.3 | 10.50 |
+| Clustering medio | 0.7204 | 0.6988 |
+| Modularity Q (Label Propagation) | 0.6957 | 0.8265 |
+| Community | 23.115 | 415 |
+| Echo Chamber Index | — | 0.8318 |
 
-### Prima vs. Dopo l'intervento CELF (30 step post-intervento, 20 fact-checker)
+Il campionamento preserva bene il clustering (−3%) ma produce un sottografo più modulare (+19% di Q) e con meno hub (grado max 119 contro 382).
 
-| Metrica | Prima | Dopo | Delta |
+### Co-evoluzione (Fase 2, step 0 → 95)
+
+| Metrica | Step 0 | Step 58 | Step 95 |
 |---|---|---|---|
-| Infection Rate | 0.5146 | 0.5690 | +0.0544 |
-| Echo Chamber Index | 0.8114 | 0.8092 | −0.0022 |
-| Modularity Q | 0.7925 | 0.7898 | −0.0027 |
-| Belief Polarisation | 0.5577 | 0.9758 | +0.4181 |
-| Nodi F (Fact-Checker) | 0 | 20 | +20 |
+| S / I / R | 4.250 / 750 / 0 | 1.043 / 1.958 / 1.999 | 956 / 1.974 / 2.070 |
+| Infection Rate | 0.150 | 0.392 | 0.395 |
+| Archi | 26.246 | 27.295 | 27.332 |
+| Echo Chamber Index | 0.8318 | 0.8142 | 0.8131 |
+| Modularity Q | 0.8265 | — | 0.7952 |
+| Belief Polarisation | — | — | 0.2420 |
+| Loss GNN | — | 0.542 | 0.537 |
 
-*Sintesi*: risultati in fase di rigenerazione dopo le correzioni descritte in CHANGELOG_FIX.md. La versione precedente usava codifiche diverse per la Belief Polarisation prima e dopo l'intervento e non permetteva ai fact-checker di influenzare i nodi suscettibili, quindi le conclusioni sull'efficacia di CELF vanno riformulate sui nuovi dati.
+- **Contagio:** l'infezione cresce da 15% a circa 39% nella prima metà della simulazione e poi entra in un **plateau**: tra lo step 58 e il 95 il numero di infetti varia di appena +16 nodi, mentre ogni step 3–5 suscettibili passano a R. A fine Fase 2 i resistenti (41%) superano gli infetti (39%).
+- **Topologia:** il rewiring guidato dalla GNN è debole (+1.086 archi in 96 step, +4%; nella seconda sessione solo +37) e quasi solo additivo. Gli archi aggiunti sono in prevalenza inter-community, tanto che ECI e Q **diminuiscono** leggermente invece di aumentare.
+
+### Fase 3 — intervento CELF (20 fact-checker)
+
+CELF ha selezionato 20 nodi S (spread stimato in Independent Cascade: 65.9 nodi, 1.3% della rete), iniettati allo step 96 con Infection Rate pari a 0.3948. **Nell'ultima esecuzione `PHASE3_STEPS = 0`**: nessuno step post-intervento è stato simulato, quindi il confronto prima/dopo del notebook mostra delta nulli (l'unica differenza è S → F per i 20 seed). L'effetto dell'intervento sulla dinamica corretta va ancora misurato.
+
+> **Run precedente (prima delle correzioni, non confrontabile):** con 30 step post-intervento l'Infection Rate saliva da 0.5146 a 0.5690. In quella versione però i fact-checker potevano agire solo sugli infetti con ≥25% di vicini F, per cui l'intervento non poteva avere effetto per costruzione, e la Belief Polarisation confrontava due codifiche diverse (+0.418 era un artefatto).
+
+## Conclusioni
+
+1. **La dinamica cognitiva domina su quella strutturale.** Gli agenti LLM determinano quasi tutta l'evoluzione del sistema (transizioni S → I/R), mentre la topologia cambia di pochi punti percentuali. Il "loop chiuso" di co-evoluzione è presente nel codice, ma nei parametri usati il feedback della rete sulla cognizione è debole.
+2. **L'infezione si auto-limita senza intervento.** Partendo dal 15% di pazienti zero, la narrazione raggiunge circa il 40% della rete e poi si stabilizza. Il meccanismo di resistenza attiva (S → R quando l'LLM valuta bassa suscettibilità) fa sì che la maggioranza degli esposti diventi resistente anziché infetta.
+3. **Nessuna formazione di echo chamber strutturali.** Contrariamente all'ipotesi di partenza, il rewiring non rafforza l'omofilia: ECI (0.832 → 0.813) e modularità (0.827 → 0.795) calano. Una parte di questo risultato dipende però da limiti del modello (vedi sotto): ECI è calcolato rispetto alle community *strutturali* fisse della Fase 0, non rispetto alle opinioni, e la generazione dei candidati per il rewiring è distorta.
+4. **L'efficacia del fact-checking resta una domanda aperta.** Con 20 seed (0.4% della rete) lo spread atteso stimato da CELF è dell'1.3% dei nodi: un ordine di grandezza sotto la quota già infetta (39%). È ragionevole attendersi un effetto locale e limitato; per una conclusione quantitativa serve eseguire la Fase 3 con `PHASE3_STEPS > 0` e confrontarla con una run di controllo senza iniezione (stesso seed e stessi step).
 
 ## Limitazioni e Sviluppi Futuri
 
-- Il budget CELF testato (fino a 20 nodi) resta uno o più ordini di grandezza sotto la soglia necessaria per un contenimento strutturale misurabile su una rete di 5.000 nodi con Infection Rate già > 50%.
-- Un'attivazione più precoce dell'intervento (prima che l'infezione superi ampiamente metà della popolazione) potrebbe risultare più efficace di un budget maggiore a parità di tempistica.
-- Integrazione di **GNN Explainer** per interpretare visivamente quali legami guidino effettivamente la polarizzazione.
-- Test con architetture di agenti LLM diverse, per valutare l'effetto di differenti "personalità" algoritmiche sulla velocità di convergenza verso l'omofilia.
+**Limiti noti dell'implementazione** (influenzano l'interpretazione dei risultati):
+
+- `src/gnn/trainer.py` → `_generate_candidates` usa `random.Random(self._seed)` con seed fisso: ad ogni step vengono campionati **gli stessi 50 nodi sorgente** per i nuovi archi, quindi il rewiring esplora sempre la stessa piccola porzione di rete (nei log ricorrono gli stessi nodi, ad es. il 4983).
+- `src/agents/state_machine.py` → le soglie LT per nodo sono estratte da un unico RNG nell'ordine di primo accesso e **non sono salvate nel checkpoint**: dopo ogni resume cross-sessione ogni nodo riceve una soglia diversa.
+- `src/influence/metrics.py` → il *Fact-Checker Spread* è la raggiungibilità BFS: su un grafo connesso vale sempre 1.0 (avg reach = 5000) e non misura l'efficacia dell'intervento.
+- **Echo Chamber Index** misura la segregazione rispetto alle community della Fase 0 e non dipende dagli stati degli agenti; per le echo chamber di opinione servirebbe una misura come l'assortatività degli stati (frazione di vicini I tra gli I).
+- **Codifica del belief incoerente:** nella Belief Polarisation R vale 0.5 (vicino a I), mentre negli embedding R spinge nella direzione opposta a I.
+- **CELF** ottimizza lo spread in un modello Independent Cascade diverso dal LT+LLM usato in simulazione; con 30 round Monte Carlo alcuni guadagni marginali risultano negativi (rumore di stima).
+- L'iniezione è manuale: `FactCheckerInjector.should_activate` (`activation_threshold` = 0.4, `celf_interval`) non viene usato dal notebook, e con IR = 0.3948 la soglia non sarebbe stata raggiunta.
+
+**Sviluppi futuri:**
+
+- Eseguire la Fase 3 con 30+ step post-intervento e una run di controllo senza fact-checker, variando budget (20, 100, 250) e momento dell'iniezione (prima del plateau).
+- Correggere i limiti sopra elencati e introdurre una metrica di echo chamber basata sulle opinioni.
+- Integrare **GNN Explainer** per interpretare quali legami guidano il rewiring.
+- Testare LLM e "personalità" degli agenti diverse per valutarne l'effetto sulla velocità di convergenza.
 
 ## Riferimenti
 
