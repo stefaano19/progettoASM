@@ -174,7 +174,7 @@ Prima di lanciare una sessione lunga conviene eseguire 3–4 step e controllare 
 - l'intervallo **Score min-max** del link predictor: deve coprire buona parte di (0, 1);
 - il prompt di un agente che ha appena cambiato stato (`orch._agents[n].system_prompt`): stato e influenza devono essere corretti.
 
-L'effetto dell'intervento è la differenza tra `results/phase3_report.json` (sessione 3) e `results/phase3_report_control.json` (sessione 4).
+L'effetto dell'intervento è la differenza tra la run con fact-checker (sessione 3) e quella di controllo (sessione 4). Lo calcola l'ultima cella del notebook, **Confronto Intervento vs Controllo**: va eseguita nella sessione 4 dopo aver aggiunto come input l'output della sessione 3. Controlla che le due run partano dallo stesso stato, stampa l'effetto finale e quello per step, e salva `results/phase3_comparison.json` e `results/figures/phase3_comparison.png`.
 
 ## Le Quattro Fasi
 
@@ -210,6 +210,7 @@ CELF sceglie `CELF_BUDGET_K` nodi suscettibili e li converte in fact-checker (st
 | `results/phase3_report.json` | Report finale della run con fact-checker (seed CELF, reach, copertura, delta) |
 | `results/phase3_report_control.json` | Report finale della run di controllo |
 | `results/pipeline_summary*.json` | Riepilogo della pipeline |
+| `results/phase3_comparison.json` | Effetto dell'intervento (intervento − controllo), finale e per step |
 | `results/figures/` | Validazione del sottografo, evoluzione di Fase 2, confronto di Fase 3, rete iniziale e finale |
 | `results/logs/` | Log JSONL con metriche, transizioni e rewiring per step |
 
