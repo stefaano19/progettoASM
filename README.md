@@ -102,7 +102,7 @@ progettoASM/
 ├── scripts/
 │   ├── check_propagation.py
 │   └── compare_phase3.py          # Effetto dell'intervento: run con fact-checker vs controllo
-├── tests/                         # Test pytest (96 test)
+├── tests/                         # Test pytest (126 test)
 ├── CHANGELOG_FIX.md               # Elenco delle correzioni
 └── results/                       # Risultati della run finale (vedi sotto); figures/ e checkpoints/
                                    # sono generati a runtime
