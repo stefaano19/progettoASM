@@ -69,6 +69,13 @@ def _tanh(x: np.ndarray) -> np.ndarray:
     return np.tanh(x)
 
 
+# Scala iniziale dei logit: gli embedding di output hanno norma sqrt(scala),
+# quindi score(u, v) = sigmoid(scala * cos(h_u, h_v)). Con norma 1 (scala 1)
+# il logit restava in [-1, 1] e lo score in [0.27, 0.73]. In PyTorch la scala
+# e' un parametro appreso (logit_scale = log(scala)).
+INITIAL_LOGIT_SCALE = 5.0
+
+
 # ---------------------------------------------------------------------------
 # NumPy GraphSAGE (fallback always available)
 # ---------------------------------------------------------------------------
@@ -79,7 +86,10 @@ class _NumpySAGELayer:
     Weights are fixed at initialization (no gradients).
     """
 
-    def __init__(self, in_dim: int, out_dim: int, seed: int, layer_idx: int) -> None:
+    def __init__(
+        self, in_dim: int, out_dim: int, seed: int, layer_idx: int, activation: bool = True,
+    ) -> None:
+        self.activation = activation
         rng = np.random.default_rng(seed + layer_idx * 1000)
         # Xavier init
         limit = np.sqrt(6.0 / (2 * in_dim + out_dim))
@@ -97,7 +107,8 @@ class _NumpySAGELayer:
             else:
                 h_agg = h_self  # Self-loop fallback
             h_cat = np.concatenate([h_self, h_agg])
-            h_new[i] = _relu(self.W @ h_cat + self.b)
+            z = self.W @ h_cat + self.b
+            h_new[i] = _relu(z) if self.activation else z
         return h_new
 
 
@@ -109,17 +120,20 @@ class _NumpyGraphSAGE:
 
     def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, seed: int) -> None:
         self.layer1 = _NumpySAGELayer(in_dim, hidden_dim, seed, layer_idx=0)
-        self.layer2 = _NumpySAGELayer(hidden_dim, out_dim, seed, layer_idx=1)
+        # Ultimo layer lineare: vedi nota in _TorchGraphSAGE
+        self.layer2 = _NumpySAGELayer(hidden_dim, out_dim, seed, layer_idx=1, activation=False)
         self._in_dim = in_dim
         self._out_dim = out_dim
 
     def forward(self, adj: list[list[int]], h: np.ndarray) -> np.ndarray:
         h1 = self.layer1.forward(h, adj)
         h2 = self.layer2.forward(h1, adj)
-        # L2 normalize output
+        # L2 normalize output, poi scala (vedi INITIAL_LOGIT_SCALE)
         norms = np.linalg.norm(h2, axis=1, keepdims=True)
         norms = np.where(norms < 1e-8, 1.0, norms)
-        return h2 / norms
+        return (h2 / norms * np.sqrt(np.exp(self.logit_scale))).astype(np.float32)
+
+    logit_scale: float = float(np.log(INITIAL_LOGIT_SCALE))
 
     def get_weights(self) -> dict[str, np.ndarray]:
         return {
@@ -127,6 +141,7 @@ class _NumpyGraphSAGE:
             "layer1_b": self.layer1.b.copy(),
             "layer2_W": self.layer2.W.copy(),
             "layer2_b": self.layer2.b.copy(),
+            "logit_scale": np.array(self.logit_scale, dtype=np.float32),
         }
 
     def set_weights(self, weights: dict[str, np.ndarray]) -> None:
@@ -134,6 +149,8 @@ class _NumpyGraphSAGE:
         self.layer1.b = weights["layer1_b"].copy()
         self.layer2.W = weights["layer2_W"].copy()
         self.layer2.b = weights["layer2_b"].copy()
+        if "logit_scale" in weights:
+            self.logit_scale = float(weights["logit_scale"])
 
 
 # ---------------------------------------------------------------------------
@@ -170,26 +187,39 @@ if _TORCH_AVAILABLE:
         return adj_sparse.coalesce()
 
     class _TorchSAGELayer(nn.Module):
-        def __init__(self, in_dim: int, out_dim: int) -> None:
+        def __init__(self, in_dim: int, out_dim: int, activation: bool = True) -> None:
             super().__init__()
             self.linear = nn.Linear(2 * in_dim, out_dim)
+            self.activation = activation
 
         def forward(self, h: "torch.Tensor", adj_sparse: "torch.Tensor") -> "torch.Tensor":
             agg = torch.sparse.mm(adj_sparse, h)
             h_cat = torch.cat([h, agg], dim=1)
-            return F.relu(self.linear(h_cat))
+            out = self.linear(h_cat)
+            return F.relu(out) if self.activation else out
 
     class _TorchGraphSAGE(nn.Module):
         def __init__(self, in_dim: int, hidden_dim: int, out_dim: int) -> None:
             super().__init__()
             self.layer1 = _TorchSAGELayer(in_dim, hidden_dim)
-            self.layer2 = _TorchSAGELayer(hidden_dim, out_dim)
+            # FIX: ultimo layer SENZA ReLU. Con ReLU + normalizzazione L2 gli
+            # embedding di output erano tutti non negativi e di norma 1, quindi
+            # il prodotto scalare stava in [0, 1] e lo score sigmoid in
+            # [0.50, 0.73]: nessun arco poteva scendere sotto la soglia di
+            # rimozione e il modello non poteva separare davvero i negativi.
+            self.layer2 = _TorchSAGELayer(hidden_dim, out_dim, activation=False)
+            # Scala appresa del logit: con output di norma 1 lo score restava
+            # in [0.27, 0.73] anche senza ReLU (vedi INITIAL_LOGIT_SCALE).
+            self.logit_scale = nn.Parameter(
+                torch.tensor(float(np.log(INITIAL_LOGIT_SCALE)))
+            )
 
         def forward(self, adj_sparse: "torch.Tensor", h: "torch.Tensor") -> "torch.Tensor":
             h1 = self.layer1(h, adj_sparse)
             h2 = self.layer2(h1, adj_sparse)
             norms = h2.norm(dim=1, keepdim=True).clamp(min=1e-8)
-            return h2 / norms
+            scale = self.logit_scale.clamp(max=float(np.log(100.0))).exp().sqrt()
+            return h2 / norms * scale
 
         def get_weights(self) -> dict[str, np.ndarray]:
             return {k: v.detach().cpu().numpy() for k, v in self.state_dict().items()}
@@ -197,7 +227,10 @@ if _TORCH_AVAILABLE:
         def set_weights(self, weights: dict[str, np.ndarray]) -> None:
             device = next(self.parameters()).device
             state = {k: torch.tensor(v, device=device) for k, v in weights.items()}
-            self.load_state_dict(state)
+            # Checkpoint precedenti a logit_scale: mantieni il valore iniziale
+            missing, unexpected = self.load_state_dict(state, strict=False)
+            if unexpected or [k for k in missing if k != "logit_scale"]:
+                raise KeyError(f"Pesi GNN incompatibili: mancanti={missing} inattesi={unexpected}")
 
 
 # ---------------------------------------------------------------------------
@@ -232,8 +265,10 @@ class GraphSAGEModel:
         if self._use_torch:
             import torch
             self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            self._model = _TorchGraphSAGE(in_dim, hidden_dim, out_dim).to(self._device)
+            # FIX: seed PRIMA di creare il modello (prima veniva impostato dopo,
+            # quindi l'inizializzazione dei pesi non dipendeva dal seed).
             torch.manual_seed(seed)
+            self._model = _TorchGraphSAGE(in_dim, hidden_dim, out_dim).to(self._device)
             logger.info("[GraphSAGE] Backend: PyTorch (%s) | in=%d hid=%d out=%d", self._device, in_dim, hidden_dim, out_dim)
         else:
             self._model = _NumpyGraphSAGE(in_dim, hidden_dim, out_dim, seed)
@@ -254,7 +289,8 @@ class GraphSAGEModel:
 
         Returns
         -------
-        np.ndarray (n, out_dim) — nuovi embedding normalizzati L2.
+        np.ndarray (n, out_dim) — embedding di norma sqrt(scala dei logit),
+        cosi' che il prodotto scalare sia scala * coseno.
         """
         if self._use_torch:
             import torch

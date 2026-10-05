@@ -145,10 +145,15 @@ class SimulationOrchestrator:
         use_mock_llm: bool = True,
         resume: bool = False,
         run_id: str | None = None,
+        resume_from_step: int | None = None,
     ) -> "SimulationOrchestrator":
         """
         Costruisce l'orchestratore completo da config.
         Carica o inizializza tutti i componenti.
+
+        resume_from_step : int | None
+            Con resume=True, riprende da questo checkpoint invece che dal piu'
+            recente (es. la Fase 3 di controllo dal checkpoint di fine Fase 2).
         """
         import json
         import pickle
@@ -159,6 +164,7 @@ class SimulationOrchestrator:
         from src.agents.state_machine import StateMachine
         from src.agents.seeder import Seeder
         from src.agents.agent import Agent
+        from src.agents.prompts import influence_levels
         from src.graph.network_manager import NetworkManager
         from src.graph.metrics import compute_centralities
         from src.gnn.embeddings import EmbeddingManager
@@ -231,10 +237,14 @@ class SimulationOrchestrator:
         # --- Resume ---
         resume_step = 0
         if resume and ckpt_manager.has_checkpoint():
-            ckpt_data = ckpt_manager.load_latest()
+            if resume_from_step is not None:
+                ckpt_data = ckpt_manager.load(resume_from_step)
+            else:
+                ckpt_data = ckpt_manager.load_latest()
             nm = ckpt_manager.restore_network_manager(ckpt_data)
             if ckpt_data.gnn_weights:
                 gnn_model.set_weights(ckpt_data.gnn_weights)
+            gnn_trainer.set_optimizer_state((ckpt_data.meta or {}).get("optimizer_state"))
             patient_zero_ids = ckpt_data.patient_zero_ids
             ckpt_manager._cumulative_metrics = list(ckpt_data.cumulative_metrics or [])
             # Riprendiamo dal passo SUCCESSIVO a quello salvato
@@ -259,6 +269,10 @@ class SimulationOrchestrator:
             else LLMClient.from_config(cfg)
         state_machine = StateMachine.from_config(cfg)
 
+        # Influenza dai percentili del grado del grafo iniziale (stabile tra
+        # sessioni: non dipende dal rewiring avvenuto prima del resume).
+        influence_map = influence_levels(dict(subG.degree()))
+
         agents: dict[int, Agent] = {}
         for node_id in nm.nodes:
             initial_state = nm.get_state(node_id)
@@ -266,8 +280,14 @@ class SimulationOrchestrator:
                           state_machine=state_machine, initial_state=initial_state)
             comm = community_map.get(node_id, 0)
             centrality_val = centralities.get(node_id, {}).get("degree_centrality", 0.0)
-            agent.initialize(community=comm, centrality=centrality_val, network_manager=nm)
+            agent.initialize(community=comm, centrality=centrality_val, network_manager=nm,
+                             influence=influence_map.get(node_id))
             agents[node_id] = agent
+
+        # Hash dei parametri effettivi (config.yaml + override del notebook)
+        effective_hash = cfg.effective_hash()
+        logger.info("[Orchestrator] Config hash: file=%s | effettivo=%s",
+                    cfg.config_hash, effective_hash)
 
         sim_logger.log_run_start(
             config_hash=cfg.config_hash,
@@ -279,6 +299,7 @@ class SimulationOrchestrator:
                 "n_nodes": nm.num_nodes,
                 "n_edges": nm.num_edges,
                 "resume_step": resume_step,
+                "effective_config_hash": effective_hash,
             },
         )
 
@@ -349,7 +370,7 @@ class SimulationOrchestrator:
         self._current_step = step
 
         # 1. AGENT CYCLE
-        n_changed = self._agent_cycle(step)
+        n_changed, llm_stats = self._agent_cycle(step)
 
         # 2. GNN CYCLE
         gnn_loss, link_scores = self._gnn_cycle(step)
@@ -372,6 +393,8 @@ class SimulationOrchestrator:
             "edges_added": n_added, "edges_removed": n_removed,
             "gnn_loss": gnn_loss,
             "num_edges": self._nm.num_edges,
+            **llm_stats,
+            **self._score_stats(link_scores),
         })
 
         self._log.log_metrics(step, {
@@ -382,13 +405,16 @@ class SimulationOrchestrator:
 
         logger.info(
             "  States: S=%d I=%d R=%d F=%d | "
-            "Rewire: +%d -%d | ECI=%.3f | Assort=%.3f | Loss=%.4f",
+            "Rewire: +%d -%d | ECI=%.3f | Assort=%.3f | Loss=%.4f | "
+            "LLM: %d chiamate, %d fallback | score archi [%.3f, %.3f]",
             state_counts["S"], state_counts["I"],
             state_counts["R"], state_counts["F"],
             n_added, n_removed,
             metrics.get("echo_chamber_index") or 0.0,
             metrics.get("belief_assortativity") or 0.0,
             gnn_loss,
+            llm_stats["llm_calls"], llm_stats["llm_fallbacks"],
+            metrics["gnn_score_min"], metrics["gnn_score_max"],
         )
 
         # 5. SCRIVI RIGA CSV (file gia' aperto in __init__)
@@ -420,14 +446,19 @@ class SimulationOrchestrator:
 
         # 6. CHECKPOINT ED ESPORTAZIONE SU KAGGLE
         if step % self._checkpoint_every == 0:
-            self._ckpt.save(
+            ckpt_path = self._ckpt.save(
                 step=step,
                 network_manager=self._nm,
                 gnn_weights=self._model.get_weights(),
                 patient_zero_ids=self._patient_zero_ids,
-                meta={"run_id": self._log._run_id if hasattr(self._log, "_run_id") else ""},
+                meta={
+                    "run_id": self._log._run_id if hasattr(self._log, "_run_id") else "",
+                    "optimizer_state": self._trainer.get_optimizer_state(),
+                    "effective_config_hash": self._cfg.effective_hash(),
+                    "phase": self._phase,
+                },
             )
-            self._export_to_kaggle_working(step)
+            self._export_to_kaggle_working(step, ckpt_path=ckpt_path)
         else:
             # Se non c'è stato checkpoint, possiamo comunque voler esportare il csv aggiornato
             self._export_to_kaggle_working(step, only_csv=True)
@@ -435,7 +466,9 @@ class SimulationOrchestrator:
         self._next_step = step + 1
         return metrics
 
-    def _export_to_kaggle_working(self, step: int, only_csv: bool = False) -> None:
+    def _export_to_kaggle_working(
+        self, step: int, only_csv: bool = False, ckpt_path: Path | None = None,
+    ) -> None:
         """
         Kaggle conserva solo i file in /kaggle/working/ tra le versioni.
         Se siamo su Kaggle, copiamo il checkpoint appena creato e il CSV
@@ -454,7 +487,11 @@ class SimulationOrchestrator:
             if not only_csv:
                 # Copia il checkpoint
                 ckpt_name = f"ckpt_step_{step:04d}.pkl"
-                ckpt_src = self._cfg.project_root / self._cfg.paths.checkpoints / ckpt_name
+                # Percorso restituito da CheckpointManager.save (puo' essere una
+                # sottocartella, es. Fase 3 in phase3_run.py)
+                ckpt_src = ckpt_path or (
+                    self._cfg.project_root / self._cfg.paths.checkpoints / ckpt_name
+                )
                 if ckpt_src.exists():
                     shutil.copy2(ckpt_src, kaggle_dir / ckpt_name)
                     
@@ -470,7 +507,19 @@ class SimulationOrchestrator:
     # Sub-cycles
     # ------------------------------------------------------------------
 
-    def _agent_cycle(self, step: int) -> int:
+    @staticmethod
+    def _score_stats(link_scores: dict) -> dict:
+        """Distribuzione degli score del link predictor (archi esistenti + candidati)."""
+        if not link_scores:
+            return {"gnn_score_min": 0.0, "gnn_score_mean": 0.0, "gnn_score_max": 0.0}
+        vals = np.fromiter(link_scores.values(), dtype=np.float64, count=len(link_scores))
+        return {
+            "gnn_score_min": float(vals.min()),
+            "gnn_score_mean": float(vals.mean()),
+            "gnn_score_max": float(vals.max()),
+        }
+
+    def _agent_cycle(self, step: int) -> tuple[int, dict]:
         """
         Esegui il ciclo agenti, con le chiamate LLM dispacciate su un thread pool.
 
@@ -570,17 +619,36 @@ class SimulationOrchestrator:
         # registrato come se nulla fosse successo. Meglio fermarsi PRIMA di
         # scrivere qualsiasi cosa: la fase PREPARE e' di sola lettura, quindi
         # l'ultimo checkpoint resta valido per riprendere.
+        # FIX: LLMClient non solleva eccezioni quando esaurisce i retry, ma
+        # restituisce una risposta di fallback (is_fallback=True): prima questo
+        # controllo contava solo le eccezioni e non scattava mai.
+        n_failed = 0
+        n_fallback = 0
         if futures:
             concurrent.futures.wait(list(futures.values()))
-            n_failed = sum(1 for f in futures.values() if f.exception() is not None)
+            first_err = None
+            for f in futures.values():
+                exc = f.exception()
+                if exc is not None:
+                    n_failed += 1
+                    first_err = first_err or repr(exc)
+                elif getattr(f.result(), "is_fallback", False):
+                    n_fallback += 1
+                    first_err = first_err or "risposta di fallback (retry esauriti)"
             max_fail = getattr(self._cfg.simulation, "max_llm_failure_rate", 0.5)
-            if n_failed / len(futures) > max_fail:
+            n_bad = n_failed + n_fallback
+            if n_bad / len(futures) > max_fail:
                 executor.shutdown(wait=False, cancel_futures=True)
-                first_exc = next(f.exception() for f in futures.values() if f.exception())
                 raise RuntimeError(
-                    f"[Orchestrator] Step {step}: {n_failed}/{len(futures)} chiamate LLM "
-                    f"fallite (> {max_fail:.0%}). LLM non disponibile? Primo errore: "
-                    f"{first_exc!r}. Simulazione interrotta: riprendi dall'ultimo checkpoint."
+                    f"[Orchestrator] Step {step}: {n_bad}/{len(futures)} chiamate LLM "
+                    f"fallite o in fallback (> {max_fail:.0%}). LLM non disponibile? "
+                    f"Primo errore: {first_err}. Simulazione interrotta: riprendi "
+                    f"dall'ultimo checkpoint."
+                )
+            if n_bad:
+                logger.warning(
+                    "[Orchestrator] Step %d: %d eccezioni e %d fallback su %d chiamate LLM.",
+                    step, n_failed, n_fallback, len(futures),
                 )
 
         # --- 3. FINALIZE (sequenziale, stesso ordine — scritture su NetworkManager) ---
@@ -648,7 +716,11 @@ class SimulationOrchestrator:
         if transitions:
             self._log.log_state_transition(step, transitions)
 
-        return len(transitions)
+        llm_stats = {
+            "llm_calls": len(futures),
+            "llm_fallbacks": n_failed + n_fallback,
+        }
+        return len(transitions), llm_stats
 
     def _gnn_cycle(self, step: int) -> tuple[float, dict]:
         """Fine-tuning GNN + calcolo score. Ritorna (loss, link_scores)."""
@@ -703,7 +775,7 @@ class SimulationOrchestrator:
 
         Da chiamare dopo ogni modifica di stato fatta "da fuori" del ciclo
         agenti (es. iniezione dei fact-checker CELF). Usa Agent.set_state,
-        che aggiunge anche la nota di cambio stato al prossimo prompt LLM.
+        che ricostruisce anche il system prompt con il nuovo stato.
         Ritorna il numero di agenti aggiornati.
         """
         ids = self._agents.keys() if node_ids is None else node_ids

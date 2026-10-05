@@ -17,9 +17,10 @@ Loss:
   - Binary cross-entropy su scores (dot-product) tra embedding
 
 Modalita':
-  - NumPy:  pseudo-training con perturbazione dei pesi proporzionale al loss
-            (nessun gradiente, ma aggiornamento euristico che converge).
-  - PyTorch: SGD/Adam su BCEWithLogitsLoss — training reale.
+  - NumPy:  NESSUN training: i pesi restano quelli iniziali (seed-based) e
+            viene solo calcolata la loss. Serve per test e dry-run locali;
+            per i risultati usare gnn.use_torch = true.
+  - PyTorch: Adam su BCEWithLogitsLoss — training reale.
 
 Il trainer mantiene anche il "link predictor inference" che calcola
 gli score su tutti gli archi esistenti + candidati per il rewiring.
@@ -70,8 +71,43 @@ class GNNTrainer:
         self._last_out: np.ndarray | None = None   # OPT2: cache ultimo forward output
         self._last_out_step: int = -1              # OPT2: step associato all'ultimo output
 
+        self._numpy_warned = False
         if model.uses_torch:
             self._init_torch_optimizer()
+
+    # ------------------------------------------------------------------
+    # Stato dell'ottimizzatore (per i checkpoint)
+    # ------------------------------------------------------------------
+
+    def get_optimizer_state(self) -> dict | None:
+        """Stato di Adam (momenti) su CPU, da salvare nel checkpoint."""
+        if not self._model.uses_torch:
+            return None
+        import torch
+        state = self._optimizer.state_dict()
+
+        def _cpu(x):
+            if isinstance(x, torch.Tensor):
+                return x.detach().cpu()
+            if isinstance(x, dict):
+                return {k: _cpu(v) for k, v in x.items()}
+            if isinstance(x, list):
+                return [_cpu(v) for v in x]
+            return x
+        return _cpu(state)
+
+    def set_optimizer_state(self, state: dict | None) -> None:
+        """
+        Ripristina lo stato di Adam. Prima a ogni resume l'ottimizzatore
+        ripartiva da zero: una run spezzata in piu' sessioni non coincideva
+        con una run continua.
+        """
+        if state is None or not self._model.uses_torch:
+            return
+        try:
+            self._optimizer.load_state_dict(state)
+        except (ValueError, KeyError) as exc:
+            logger.warning("[Trainer] Stato ottimizzatore non compatibile, ignorato: %s", exc)
 
     def _init_torch_optimizer(self) -> None:
         import torch.optim as optim
@@ -132,7 +168,9 @@ class GNNTrainer:
         edge_set = set(G.edges()) | {(v, u) for u, v in G.edges()}
         neg_edges: list[tuple[int, int]] = []
         batch = 8192
-        while len(neg_edges) < n_neg:
+        attempts = 0
+        while len(neg_edges) < n_neg and attempts < 20:
+            attempts += 1
             us = rng.choice(nodes, size=batch)
             vs = rng.choice(nodes, size=batch)
             for u, v in zip(us.tolist(), vs.tolist()):
@@ -140,22 +178,24 @@ class GNNTrainer:
                     neg_edges.append((u, v))
                     if len(neg_edges) >= n_neg:
                         break
-            # Safety: se non troviamo abbastanza negativi, usciamo
+            # Safety: al massimo 20 batch (prima la condizione di uscita
+            # batch > 32768 non era mai vera, perche' batch <= 16384).
             batch = min(batch * 2, 16384)
-            if batch > 32768:
-                break
 
         return pos_sample, neg_edges[:n_neg]
 
     def _train_numpy(self, G: "nx.Graph", embeddings: np.ndarray, step: int) -> float:
         """
-        Pseudo-training numpy: aggiorna i pesi proporzionalmente al gradiente
-        del BCE loss calcolato numericamente (differenze finite approssimate).
-
-        Convergenza euristica: riduce progressivamente il loss spostando
-        gli embedding dei nodi connessi l'uno verso l'altro e allontanando
-        quelli non connessi.
+        Modalita' numpy: calcola SOLO la loss BCE con i pesi fissi; i pesi non
+        vengono aggiornati (non c'e' backpropagation). La docstring precedente
+        parlava di un aggiornamento euristico che non e' mai esistito.
         """
+        if not self._numpy_warned:
+            logger.warning(
+                "[Trainer] Backend NumPy: i pesi della GNN NON vengono addestrati "
+                "(solo calcolo della loss). Usa gnn.use_torch = true per i risultati."
+            )
+            self._numpy_warned = True
         pos_edges, neg_edges = self._sample_edges(G, embeddings.shape[0], step)
         if not pos_edges:
             return 0.0

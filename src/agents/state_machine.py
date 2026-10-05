@@ -32,7 +32,8 @@ Regole di transizione:
             potra' ancora convertirsi in I piu' avanti se la pressione cresce.
   I -> R  : se frazione_vicini_F > resistance_threshold  OR proposed_state == "R"
   I -> I  : altrimenti (rimane infetto)
-  R -> I  : se fraction_I >= relapse_threshold AND susceptibility > 0.8  (ricaduta)
+  R -> I  : se fraction_I >= relapse_threshold AND susceptibility > relapse_min_susceptibility
+            AND proposed_state == "I"  (ricaduta)
   R -> R  : altrimenti (rimane resistente)
   F -> F  : lo stato F e' assorbente (iniettato da CELF, non torna indietro)
 
@@ -130,6 +131,7 @@ class StateMachine:
         min_resistance_exposure: float = 0.12,
         resistance_susceptibility_cutoff: float = 0.5,
         fc_protection_threshold: float = 0.10,
+        relapse_min_susceptibility: float = 0.8,
     ) -> None:
         self._seed = seed
         self._rng = random.Random(seed)
@@ -140,6 +142,7 @@ class StateMachine:
         self._min_resistance_exposure = min_resistance_exposure
         self._resistance_susceptibility_cutoff = resistance_susceptibility_cutoff
         self._fc_protection_threshold = fc_protection_threshold
+        self._relapse_min_susceptibility = relapse_min_susceptibility
         self._node_thresholds: dict[int, float] = {}
 
     @classmethod
@@ -150,6 +153,10 @@ class StateMachine:
         inf_cfg = getattr(cfg, "influence", None)
         return cls(
             seed=cfg.execution.random_seed,
+            base_threshold_mean=getattr(sim_cfg, "base_threshold_mean", 0.3),
+            base_threshold_std=getattr(sim_cfg, "base_threshold_std", 0.1),
+            relapse_threshold=getattr(sim_cfg, "relapse_threshold", 0.6),
+            relapse_min_susceptibility=getattr(sim_cfg, "relapse_min_susceptibility", 0.8),
             resistance_threshold=getattr(inf_cfg, "fc_resistance_threshold", 0.25),
             fc_protection_threshold=getattr(inf_cfg, "fc_protection_threshold", 0.10),
             min_resistance_exposure=getattr(sim_cfg, "min_resistance_exposure", 0.12),
@@ -233,11 +240,11 @@ class StateMachine:
         state = AgentState.from_str(raw_state)
 
         # Estrai parametri LLM
-        susceptibility = float(llm_output.get("susceptibility", 0.5))
-        susceptibility = max(0.0, min(1.0, susceptibility))
+        from src.agents.llm_client import parse_bool, parse_float
+        susceptibility = parse_float(llm_output.get("susceptibility", 0.5))
         proposed_raw = str(llm_output.get("proposed_state", state.value))
         proposed = AgentState.from_str(proposed_raw)
-        spread_intent = bool(llm_output.get("spread_intent", False))
+        spread_intent = parse_bool(llm_output.get("spread_intent", False))
 
         # Pressione di infezione: fraction of infected neighbours
         total_neighbours = max(sum(neighbour_states.values()), 1)
@@ -298,8 +305,14 @@ class StateMachine:
             # else: rimane I
 
         elif state == AgentState.R:
-            # Ricaduta: solo se vicinato molto infetto E alta suscettibilita'
-            if fraction_I >= self._relapse_threshold and susceptibility > 0.8:
+            # Ricaduta: vicinato molto infetto, alta suscettibilita' E l'LLM
+            # propone I. FIX: prima bastavano le prime due condizioni, anche se
+            # l'agente dichiarava di restare R.
+            if (
+                fraction_I >= self._relapse_threshold
+                and susceptibility > self._relapse_min_susceptibility
+                and proposed == AgentState.I
+            ):
                 new_state = AgentState.I
                 reason = f"relapse (f_I={fraction_I:.2f}, susc={susceptibility:.2f})"
             # else: rimane R

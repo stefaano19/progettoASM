@@ -39,12 +39,14 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from src.agents.llm_client import LLMClient, MockLLMClient, extract_json
-from src.agents.prompts import (
-    build_system_prompt,
-    build_user_prompt,
-    build_state_update_note,
+from src.agents.llm_client import (
+    LLMClient,
+    MockLLMClient,
+    extract_json,
+    parse_bool,
+    parse_float,
 )
+from src.agents.prompts import build_system_prompt, build_user_prompt
 from src.agents.state_machine import AgentState, StateMachine
 
 if TYPE_CHECKING:
@@ -137,9 +139,15 @@ class Agent:
         self._state = AgentState.from_str(initial_state)
         self._memory_window = cfg.simulation.memory_window
 
-        # System prompt costruito alla creazione (rimane stabile salvo cambio stato)
+        # System prompt: ricostruito a ogni cambio di stato (_rebuild_system_prompt)
         self._system_prompt: str = ""
-        self._state_update_note: str = ""
+        self._community: int = 0
+        self._centrality: float = 0.0
+        self._influence: str | None = None
+        self._initialized = False
+        self._seed = cfg.execution.random_seed
+        # Smart Cache (opzionale, cfg.simulation.smart_cache)
+        self._smart_cache = bool(getattr(cfg.simulation, "smart_cache", False))
         self._last_context_hash: str | None = None
         self._last_response: "LLMResponse | None" = None
 
@@ -170,20 +178,21 @@ class Agent:
         community: int,
         centrality: float,
         network_manager: "NetworkManager",
+        influence: str | None = None,
     ) -> None:
         """
         Completa l'inizializzazione dell'agente con i dati del grafo.
         Chiamato dall'Orchestratore dopo la costruzione.
+
+        influence : "high" | "medium" | "low" | None
+            Etichetta di influenza dai percentili del grado (vedi
+            prompts.influence_levels). Se None, soglie assolute sulla centralita'.
         """
         self._community = community
         self._centrality = centrality
-        self._system_prompt = build_system_prompt(
-            node_id=self.node_id,
-            community=community,
-            state=self._state.value,
-            centrality=centrality,
-            cfg=self._cfg,
-        )
+        self._influence = influence
+        self._initialized = True
+        self._rebuild_system_prompt()
         logger.debug("[Agent %d] Inizializzato | state=%s | community=%d", self.node_id, self._state.value, community)
 
     # ------------------------------------------------------------------
@@ -203,12 +212,39 @@ class Agent:
         """
         return self._llm
 
+    @property
+    def system_prompt(self) -> str:
+        return self._system_prompt
+
+    def _rebuild_system_prompt(self) -> None:
+        """
+        FIX: prima il system prompt veniva costruito una sola volta con lo
+        stato iniziale; dopo un cambio di stato diceva ancora per esempio
+        "You are currently NEUTRAL" mentre il prompt utente diceva "Your
+        current state: I" (e i fact-checker venivano descritti come neutrali).
+        La nota correttiva arrivava solo alla chiamata successiva e poi
+        spariva. Ora il prompt dipende solo da (nodo, community, influenza,
+        stato corrente): identico anche dopo un resume da checkpoint.
+        """
+        if not self._initialized:
+            return
+        self._system_prompt = build_system_prompt(
+            node_id=self.node_id,
+            community=self._community,
+            state=self._state.value,
+            centrality=self._centrality,
+            cfg=self._cfg,
+            influence=self._influence,
+        )
+
     def set_state(self, new_state: str) -> None:
         """Forza lo stato (usato da CELF per iniezione fact-checker)."""
         old = self._state.value
         self._state = AgentState.from_str(new_state)
-        if old != new_state:
-            self._state_update_note = build_state_update_note(old, new_state)
+        if old != self._state.value:
+            self._rebuild_system_prompt()
+            self._last_context_hash = None
+            self._last_response = None
 
     # ------------------------------------------------------------------
     # Ciclo completo
@@ -292,7 +328,13 @@ class Agent:
         old_state = self._state.value
 
         # 1. Percezione
-        feed = network_manager.get_feed(self.node_id, window=self._memory_window)
+        # Seed (globale, nodo, step): a parita' di step i post vengono ordinati
+        # in modo casuale ma riproducibile, non secondo l'ordine di adiacenza
+        # (che metteva in fondo i vicini aggiunti dal rewiring).
+        feed_seed = (self._seed * 1_000_003 + self.node_id) * 10_007 + current_step
+        feed = network_manager.get_feed(
+            self.node_id, window=self._memory_window, seed=feed_seed
+        )
         neighbours = network_manager.neighbours(self.node_id)
         if all_states is None:
             all_states = network_manager.get_all_states()
@@ -300,14 +342,24 @@ class Agent:
             self.node_id, all_states, neighbours
         )
 
-        import hashlib
-        # Convertiamo feed e vicinato in stringa per l'hash (escludendo gli step dei post)
-        feed_str = str([{k: v for k, v in f.items() if k != "step"} for f in feed])
-        context_str = f"S:{old_state}|F:{feed_str}|N:{nb_state_counts}"
-        context_hash = hashlib.md5(context_str.encode()).hexdigest()
+        # --- SMART CACHE (opzionale, disattivata di default) ---
+        # Riusa l'ultima risposta LLM se stato, feed e vicinato non sono
+        # cambiati. ATTENZIONE: l'impronta ignora lo step, quindi un agente con
+        # contesto stabile ripete la stessa decisione per sempre ("congelato")
+        # e ripubblica lo stesso post. Per questo e' disattivata
+        # (cfg.simulation.smart_cache = false).
+        context_hash: str | None = None
+        if self._smart_cache:
+            import hashlib
+            feed_str = str([{k: v for k, v in f.items() if k != "step"} for f in feed])
+            context_str = f"S:{old_state}|F:{feed_str}|N:{nb_state_counts}"
+            context_hash = hashlib.md5(context_str.encode()).hexdigest()
 
-        # --- SMART CACHE OPTIMIZATION ---
-        if getattr(self, "_last_context_hash", None) == context_hash and getattr(self, "_last_response", None) is not None:
+        if (
+            context_hash is not None
+            and self._last_context_hash == context_hash
+            and self._last_response is not None
+        ):
             return AgentStepContext(
                 old_state=old_state,
                 current_step=current_step,
@@ -336,11 +388,10 @@ class Agent:
             memory_window=self._memory_window,
         )
 
-        messages = [{"role": "system", "content": self._system_prompt}]
-        if self._state_update_note:
-            messages.append({"role": "system", "content": self._state_update_note})
-            self._state_update_note = ""
-        messages.append({"role": "user", "content": user_prompt})
+        messages = [
+            {"role": "system", "content": self._system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
 
         return AgentStepContext(
             old_state=old_state,
@@ -387,20 +438,21 @@ class Agent:
             tokens_in = response.input_tokens
             tokens_out = response.output_tokens
             
-            # Salva in cache
-            if not is_fallback:
+            # Salva per la Smart Cache (solo se attiva)
+            if not is_fallback and ctx.context_hash is not None:
                 self._last_response = response
-                self._last_context_hash = getattr(ctx, "context_hash", None)
+                self._last_context_hash = ctx.context_hash
         else:
             from src.agents.llm_client import FALLBACK_AGENT_OUTPUT
             llm_output = FALLBACK_AGENT_OUTPUT.copy()
             is_fallback = True
             tokens_in = tokens_out = 0
 
-        # Clamp susceptibility
-        susc = max(0.0, min(1.0, float(llm_output.get("susceptibility", 0.5))))
-        opinion = str(llm_output.get("opinion", "")).strip()[:200]
-        spread_intent = bool(llm_output.get("spread_intent", False))
+        # Parsing robusto: bool("false") sarebbe True; un valore non numerico
+        # di susceptibility faceva fallire finalize_step.
+        susc = parse_float(llm_output.get("susceptibility", 0.5))
+        opinion = str(llm_output.get("opinion", "") or "").strip()[:200]
+        spread_intent = parse_bool(llm_output.get("spread_intent", False))
         reasoning = str(llm_output.get("reasoning", ""))
 
         # 4. Transizione di stato
@@ -414,12 +466,14 @@ class Agent:
         state_changed = transition.changed
 
         # 5. Azione — pubblica post e aggiorna NetworkManager
+        # FIX: il post porta lo stato DOPO la transizione. Prima un agente
+        # che passava da S a I pubblicava il post pro-narrativa con [S].
         if opinion:
             network_manager.add_post(self.node_id, {
                 "node_id": self.node_id,
                 "step": current_step,
                 "content": opinion,
-                "author_state": old_state,
+                "author_state": new_state_enum.value,
             })
 
         # 6. Perturbazione embedding (saltata se l'orchestratore la fa in batch)
@@ -432,7 +486,7 @@ class Agent:
         if state_changed:
             self._state = new_state_enum
             network_manager.set_state(self.node_id, new_state_enum.value)
-            self._state_update_note = build_state_update_note(old_state, new_state_enum.value)
+            self._rebuild_system_prompt()
 
         logger.debug(
             "[Agent %d] step=%d | %s->%s | susc=%.2f | opinion=%s",

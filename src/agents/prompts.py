@@ -119,11 +119,54 @@ _INFLUENCE_LABELS: dict[str, str] = {
 
 
 def _influence_label(centrality: float) -> str:
+    """
+    Etichetta da soglie assolute di degree centrality. Usata solo come
+    fallback quando non si passa `influence` a build_system_prompt: nel
+    sottografo ogbl-collab (grado max ~119 su 5000 nodi, centralita' ~0.024)
+    nessun nodo supera 0.03, quindi tutti risulterebbero "low".
+    """
     if centrality > 0.1:
         return "high"
     if centrality > 0.03:
         return "medium"
     return "low"
+
+
+# Quantili del grado per le etichette di influenza (relative al grafo)
+INFLUENCE_HIGH_QUANTILE = 0.90    # top 10% -> "high"
+INFLUENCE_MEDIUM_QUANTILE = 0.60  # dal 60esimo al 90esimo percentile -> "medium"
+
+
+def influence_levels(degrees: dict[int, int]) -> dict[int, str]:
+    """
+    Etichetta di influenza per nodo dai PERCENTILI del grado.
+
+    FIX: le soglie assolute di _influence_label (0.03 / 0.1 di centralita')
+    non venivano mai raggiunte nel grafo reale: anche gli hub ricevevano
+    "Low influence". Qui:
+      - high   : grado >= 90esimo percentile
+      - medium : grado >= 60esimo percentile
+      - low    : il resto
+    Un nodo con il grado minimo del grafo e' sempre "low" (evita che un
+    grafo quasi regolare risulti tutto "high").
+    """
+    import numpy as np
+
+    if not degrees:
+        return {}
+    vals = np.fromiter(degrees.values(), dtype=np.float64, count=len(degrees))
+    q_high = float(np.quantile(vals, INFLUENCE_HIGH_QUANTILE))
+    q_med = float(np.quantile(vals, INFLUENCE_MEDIUM_QUANTILE))
+    d_min = float(vals.min())
+    levels: dict[int, str] = {}
+    for node, d in degrees.items():
+        if d > d_min and d >= q_high:
+            levels[node] = "high"
+        elif d > d_min and d >= q_med:
+            levels[node] = "medium"
+        else:
+            levels[node] = "low"
+    return levels
 
 
 # ---------------------------------------------------------------------------
@@ -176,14 +219,21 @@ def build_system_prompt(
     state: str,
     centrality: float,
     cfg: "Config",
+    influence: str | None = None,
 ) -> str:
     """
     Costruisce il system prompt per un agente specifico.
-    Il prompt e' stabile durante tutta la simulazione (identity invariant).
+
+    Va ricostruito a ogni cambio di stato (lo fa Agent): contiene la
+    descrizione dello stato corrente.
+
+    influence : "high" | "medium" | "low" | None
+        Etichetta gia' calcolata (vedi influence_levels). Se None si usa
+        _influence_label(centrality) con soglie assolute.
     """
     personality = _get_personality(community)
     state_desc = _STATE_DESCRIPTIONS.get(state, _STATE_DESCRIPTIONS["S"])
-    inf_key = _influence_label(centrality)
+    inf_key = influence if influence in _INFLUENCE_LABELS else _influence_label(centrality)
 
     return SYSTEM_PROMPT_TEMPLATE.format(
         node_id=node_id,

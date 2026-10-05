@@ -9,6 +9,12 @@ Esegui con:
     python phase3_run.py --budget-k 15   (override del budget CELF)
     python phase3_run.py --no-celf       (run di CONTROLLO: stessi step, nessun fact-checker)
     python phase3_run.py --steps 5       (step post-intervento)
+    python phase3_run.py --from-step 99  (parte da quel checkpoint di Fase 2)
+
+Intervento e controllo devono partire dallo STESSO checkpoint di fine Fase 2.
+I checkpoint della Fase 3 vengono salvati in results/checkpoints/phase3[_control]/,
+cosi' non sostituiscono (ne' cancellano, con keep_last) quelli della Fase 2 e le
+due run si possono lanciare in qualsiasi ordine.
 
 Flusso:
   1. Carica checkpoint Fase 2 (o inizializza ex-novo se non esiste).
@@ -70,11 +76,26 @@ def main(args: argparse.Namespace) -> None:
     ckpt_manager = CheckpointManager(cfg)
     use_mock = not args.no_mock_llm
     logger.info("LLM          : %s", "mock" if use_mock else "reale")
+    if args.from_step is not None and not ckpt_manager.has_checkpoint(args.from_step):
+        raise FileNotFoundError(f"Checkpoint di Fase 2 allo step {args.from_step} non trovato.")
     orch = SimulationOrchestrator.build_from_config(
         cfg,
         use_mock_llm=use_mock,   # FIX: prima era sempre True (mock) anche in produzione
         resume=ckpt_manager.has_checkpoint(),
+        resume_from_step=args.from_step,
     )
+
+    # FIX: i checkpoint della Fase 3 vanno in una sottocartella. Prima finivano
+    # accanto a quelli della Fase 2: la run lanciata per seconda ripartiva
+    # dall'ultimo step della prima (non dalla fine della Fase 2), e keep_last=3
+    # cancellava il checkpoint di fine Fase 2.
+    import dataclasses
+    phase3_dir = Path(cfg.paths.checkpoints) / ("phase3_control" if args.no_celf else "phase3")
+    cfg_phase3 = dataclasses.replace(cfg, paths=dataclasses.replace(cfg.paths, checkpoints=phase3_dir))
+    phase3_ckpt = CheckpointManager(cfg_phase3)
+    phase3_ckpt._cumulative_metrics = list(orch._ckpt._cumulative_metrics)
+    orch._ckpt = phase3_ckpt
+    logger.info("Checkpoint Fase 3 in: %s", cfg.project_root / phase3_dir)
 
     nm = orch.network_manager
     logger.info(
@@ -152,7 +173,8 @@ def main(args: argparse.Namespace) -> None:
     # Marca i prossimi step nel CSV: "3" = intervento, "3_control" = controllo
     orch._phase = "3_control" if args.no_celf else "3"
     # FIX: next_step e' gia' il primo step non eseguito (prima +1 saltava uno step)
-    orch.run(n_steps=n_post_steps, start_step=orch.next_step)
+    phase3_start = orch.next_step
+    orch.run(n_steps=n_post_steps, start_step=phase3_start)
     orch.close()
 
     # -------------------------------------------------------
@@ -174,6 +196,8 @@ def main(args: argparse.Namespace) -> None:
     report["injected_nodes"] = injected_nodes
     report["n_post_steps"] = n_post_steps
     report["config_hash"] = cfg.config_hash
+    report["effective_config_hash"] = cfg.effective_hash()
+    report["phase3_start_step"] = phase3_start
     report["seed"] = cfg.execution.random_seed
     report["budget_k"] = budget_k
 
@@ -255,6 +279,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--steps", type=int, default=None,
         help="Step post-intervento (default: max_steps // 4)",
+    )
+    parser.add_argument(
+        "--from-step", type=int, default=None,
+        help="Step del checkpoint di Fase 2 da cui partire (default: il piu' recente)",
     )
     parser.add_argument(
         "--no-mock-llm", action="store_true",

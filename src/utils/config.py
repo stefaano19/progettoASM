@@ -112,7 +112,12 @@ class SimulationConfig:
     # Parametri StateMachine (prima letti con getattr ma mai caricabili da YAML)
     min_resistance_exposure: float = 0.12
     resistance_susceptibility_cutoff: float = 0.5
-    max_llm_failure_rate: float = 0.5   # oltre questa quota di chiamate fallite lo step si ferma
+    max_llm_failure_rate: float = 0.5   # oltre questa quota di chiamate fallite (o fallback) lo step si ferma
+    base_threshold_mean: float = 0.3    # soglia LT base per nodo ~ N(mean, std)
+    base_threshold_std: float = 0.1
+    relapse_threshold: float = 0.6      # R -> I se frazione vicini I >= soglia ...
+    relapse_min_susceptibility: float = 0.8  # ... e susceptibility LLM > questo valore (e proposed_state = I)
+    smart_cache: bool = False           # riusa la risposta LLM se feed e vicinato non cambiano (congela gli agenti)
 
 
 @dataclass
@@ -122,6 +127,7 @@ class LLMApiConfig:
     temperature: float = 0.7
     max_tokens: int = 512
     api_key_env: str = "GEMINI_API_KEY"
+    timeout: float = 300.0              # secondi per richiesta (poi retry e fallback)
 
 
 @dataclass
@@ -130,6 +136,7 @@ class LLMLocalConfig:
     model: str = "llama3"
     temperature: float = 0.7
     max_tokens: int = 512
+    timeout: float = 300.0              # secondi per richiesta (poi retry e fallback)
 
 
 @dataclass
@@ -203,6 +210,20 @@ class Config:
     def resolve(self, relative_path: str) -> Path:
         """Risolvi un path relativo rispetto alla project root."""
         return self.project_root / relative_path
+
+    def effective_hash(self) -> str:
+        """
+        Hash dei parametri EFFETTIVI (dopo eventuali override da notebook).
+        config_hash e' calcolato sul file YAML al caricamento e non vede le
+        modifiche fatte a runtime (es. cfg.simulation.activation_probability).
+        """
+        import dataclasses
+        import json
+        data = dataclasses.asdict(self)
+        data.pop("project_root", None)
+        data.pop("config_hash", None)
+        blob = json.dumps(data, sort_keys=True, default=str)
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
     def ensure_dirs(self) -> None:
         """Crea tutte le directory di output se non esistono."""

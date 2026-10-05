@@ -155,16 +155,25 @@ class NetworkManager:
     # Feed vicinato
     # ------------------------------------------------------------------
 
-    def get_feed(self, node_id: int, window: int = 5) -> list[dict]:
+    def get_feed(self, node_id: int, window: int = 5, seed: int | None = None) -> list[dict]:
         """
         Ritorna gli ultimi `window` post per ogni vicino del nodo,
         ordinati dal piu' recente al piu' vecchio.
-        Ottimizzato: usa heapq.merge per evitare re-sort O(n log n)
-        su liste già ordinate per step.
+
+        seed : int | None
+            Se dato, i vicini vengono mescolati (in modo riproducibile) prima
+            dell'ordinamento per step, che e' stabile: a parita' di step i
+            post compaiono in ordine casuale. Senza seed l'ordine a parita' di
+            step e' quello di adiacenza di networkx, in cui gli archi aggiunti
+            dal rewiring stanno in fondo: con il taglio del feed nel prompt,
+            gli hub non vedevano quasi mai i post dei nuovi vicini.
         """
         nbrs = list(self.G.neighbors(node_id))
         if not nbrs:
             return []
+        if seed is not None:
+            import random
+            random.Random(seed).shuffle(nbrs)
         feed: list[dict] = []
         for nb in nbrs:
             posts = self._post_store.get(nb, [])

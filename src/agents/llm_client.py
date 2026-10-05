@@ -69,18 +69,27 @@ class LLMDiskCache:
     Cache su disco thread-safe per le risposte LLM.
     Evita di rifare chiamate API costose se la sessione (es. Kaggle) viene
     interrotta a meta' di uno step lungo.
+
+    FIX: prima era un singleton unico su "results/checkpoints/llm_cache.jsonl"
+    (relativo alla directory di lavoro), condiviso con MockLLMClient e con i
+    test, e la chiave non conteneva il modello: una run reale poteva leggere
+    risposte del mock o di un altro modello. Ora c'e' un'istanza per file
+    (indicato da LLMClient.from_config) e la chiave include backend, modello e
+    parametri di generazione (vedi LLMClient._cache_namespace).
     """
-    _instance = None
+    _instances: dict[Path, "LLMDiskCache"] = {}
     _lock = threading.Lock()
 
-    def __new__(cls, cache_dir: str = "results/checkpoints"):
+    def __new__(cls, cache_dir: str | Path = "results/checkpoints"):
+        path = Path(cache_dir).resolve()
         with cls._lock:
-            if cls._instance is None:
-                cls._instance = super(LLMDiskCache, cls).__new__(cls)
-                cls._instance._init(cache_dir)
-            return cls._instance
+            if path not in cls._instances:
+                inst = super(LLMDiskCache, cls).__new__(cls)
+                inst._init(path)
+                cls._instances[path] = inst
+            return cls._instances[path]
 
-    def _init(self, cache_dir: str):
+    def _init(self, cache_dir: Path):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache_file = self.cache_dir / "llm_cache.jsonl"
@@ -183,27 +192,62 @@ FALLBACK_AGENT_OUTPUT = {
     "spread_intent": False,
 }
 
+def parse_bool(value: Any, default: bool = False) -> bool:
+    """
+    Booleano robusto per l'output LLM: bool("false") sarebbe True.
+    Accetta bool, numeri e stringhe ("true"/"false", "yes"/"no", "1"/"0").
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("true", "yes", "y", "1"):
+            return True
+        if v in ("false", "no", "n", "0", ""):
+            return False
+    return default
+
+
+def parse_float(value: Any, default: float = 0.5, lo: float = 0.0, hi: float = 1.0) -> float:
+    """Float clippato in [lo, hi]; default se il valore non e' convertibile o e' NaN."""
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return default
+    if x != x:  # NaN
+        return default
+    return max(lo, min(hi, x))
+
+
 def extract_json(text: str, fallback: dict | None = None) -> tuple[dict, bool]:
     fb = fallback if fallback is not None else FALLBACK_AGENT_OUTPUT.copy()
 
-    try:
-        return json.loads(text.strip()), False
-    except json.JSONDecodeError:
-        pass
+    def _try(s: str) -> dict | None:
+        try:
+            obj = json.loads(s)
+        except json.JSONDecodeError:
+            return None
+        # Solo un oggetto JSON e' valido: una lista o un numero farebbero
+        # fallire .get() in finalize_step (agente saltato senza essere contato).
+        return obj if isinstance(obj, dict) else None
+
+    obj = _try(text.strip())
+    if obj is not None:
+        return obj, False
 
     cleaned = re.sub(r"```(?:json)?", "", text).strip()
-    try:
-        return json.loads(cleaned), False
-    except json.JSONDecodeError:
-        pass
+    obj = _try(cleaned)
+    if obj is not None:
+        return obj, False
 
     start_idx = cleaned.find("{")
     end_idx = cleaned.rfind("}")
     if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
-        try:
-            return json.loads(cleaned[start_idx:end_idx+1]), False
-        except json.JSONDecodeError:
-            pass
+        obj = _try(cleaned[start_idx:end_idx+1])
+        if obj is not None:
+            return obj, False
 
     logger.warning(
         "[LLMClient] JSON non parsabile — uso fallback. Estratto risposta: %r",
@@ -233,6 +277,7 @@ class _GeminiBackend:
         self._model_name = cfg.get("model", "gemini-2.0-flash")
         self._temperature = cfg.get("temperature", 0.7)
         self._max_tokens = cfg.get("max_tokens", 512)
+        self._timeout = cfg.get("timeout", 300.0)
 
     def chat(self, messages: list[dict], seed: int | None = None) -> LLMResponse:
         system_parts = [m["content"] for m in messages if m["role"] == "system"]
@@ -256,7 +301,7 @@ class _GeminiBackend:
         last = history_msgs[-1]["content"] if history_msgs else ""
 
         t0 = time.perf_counter()
-        resp = session.send_message(last)
+        resp = session.send_message(last, request_options={"timeout": self._timeout})
         latency = time.perf_counter() - t0
 
         usage = resp.usage_metadata
@@ -293,6 +338,9 @@ class _OpenAICompatibleBackend:
         self._model = cfg.get("model", "llama3")
         self._temperature = cfg.get("temperature", 0.7)
         self._max_tokens = cfg.get("max_tokens", 512)
+        # FIX: prima timeout=None — un server vLLM bloccato (connessione
+        # aperta ma nessuna risposta) fermava la run per sempre.
+        self._timeout = cfg.get("timeout", 300.0)
 
     def chat(self, messages: list[dict], seed: int | None = None) -> LLMResponse:
         t0 = time.perf_counter()
@@ -301,7 +349,7 @@ class _OpenAICompatibleBackend:
             messages=messages,  # type: ignore[arg-type]
             temperature=self._temperature,
             max_tokens=self._max_tokens,
-            timeout=None,
+            timeout=self._timeout,
             response_format={"type": "json_object"},
             # Seed per richiesta: a parita' di prompt vLLM campiona la stessa
             # risposta -> run confrontabili (es. intervento vs controllo).
@@ -329,9 +377,14 @@ class LLMClient:
     Client LLM portabile con retry, token budget e disk cache.
     """
 
-    def __init__(self, llm_config: dict, max_retries: int = 3) -> None:
+    def __init__(
+        self,
+        llm_config: dict,
+        max_retries: int = 3,
+        cache_dir: str | Path = "results/checkpoints",
+    ) -> None:
         self._max_retries = max_retries
-        self._cache = LLMDiskCache()
+        self._cache = LLMDiskCache(cache_dir)
         backend_key = llm_config.get("backend", "api")
 
         if backend_key == "api":
@@ -342,12 +395,15 @@ class LLMClient:
             else:
                 self._backend = _OpenAICompatibleBackend(api_cfg, "openai")
             logger.info("[LLMClient] API backend: %s", provider)
+            gen_cfg = api_cfg
         elif backend_key == "local":
             local_cfg = llm_config.get("local", {})
             self._backend = _OpenAICompatibleBackend(local_cfg, "local")
             logger.info("[LLMClient] Local backend: %s", local_cfg.get("model"))
+            gen_cfg = local_cfg
         else:
             raise ValueError(f"Backend LLM non valido: '{backend_key}'")
+        self._cache_namespace = self.make_cache_namespace(backend_key, gen_cfg)
 
         budget = llm_config.get("token_budget", {})
         if budget:
@@ -360,13 +416,28 @@ class LLMClient:
     def from_config(cls, cfg: "Config") -> "LLMClient":
         import dataclasses
         llm_cfg = dataclasses.asdict(cfg.llm)
-        return cls(llm_cfg)
+        return cls(llm_cfg, cache_dir=cfg.project_root / cfg.paths.checkpoints)
+
+    @staticmethod
+    def make_cache_namespace(backend_key: str, gen_cfg: dict) -> str:
+        """Identifica backend/modello/parametri: entra nella chiave della cache."""
+        return "|".join(str(x) for x in (
+            backend_key,
+            gen_cfg.get("provider", ""),
+            gen_cfg.get("model", ""),
+            gen_cfg.get("temperature", ""),
+            gen_cfg.get("max_tokens", ""),
+        ))
 
     def chat(self, messages: list[dict]) -> LLMResponse:
         msg_key = json.dumps(messages, sort_keys=True, ensure_ascii=False)
+        # Il seed per richiesta dipende solo dal prompt (run confrontabili);
+        # la chiave di cache include anche backend/modello/parametri.
         msg_hash = hashlib.md5(msg_key.encode("utf-8")).hexdigest()
+        namespace = getattr(self, "_cache_namespace", "")
+        cache_key = hashlib.md5(f"{namespace}#{msg_key}".encode("utf-8")).hexdigest()
 
-        cached_data = self._cache.get(msg_hash)
+        cached_data = self._cache.get(cache_key)
         if cached_data:
             return LLMResponse(
                 content=cached_data["content"],
@@ -393,7 +464,7 @@ class LLMClient:
                 if is_fallback_parse:
                     raise ValueError(f"vLLM output is not valid JSON: {response.content[:100]}")
                 
-                self._cache.set(msg_hash, {
+                self._cache.set(cache_key, {
                     "content": response.content,
                     "input_tokens": response.input_tokens,
                     "output_tokens": response.output_tokens,
@@ -444,7 +515,9 @@ class MockLLMClient:
         self._infection_rate = infection_rate
         self._call_count = 0
         self._lock = threading.Lock()
-        self._cache = LLMDiskCache()
+        # FIX: il mock non usa la cache su disco. Prima scriveva nello stesso
+        # llm_cache.jsonl del client reale (anche durante i test), e una run
+        # reale successiva poteva leggere quelle risposte finte.
 
     def chat(self, messages: list[dict]) -> LLMResponse:
         import hashlib
@@ -452,17 +525,6 @@ class MockLLMClient:
 
         msg_key = json.dumps(messages, sort_keys=True, ensure_ascii=False)
         msg_hash = hashlib.md5(msg_key.encode("utf-8")).hexdigest()
-
-        cached_data = self._cache.get(msg_hash)
-        if cached_data:
-            return LLMResponse(
-                content=cached_data["content"],
-                input_tokens=cached_data.get("input_tokens", 0),
-                output_tokens=cached_data.get("output_tokens", 0),
-                model=cached_data.get("model", "mock"),
-                latency_s=0.0,
-                is_fallback=cached_data.get("is_fallback", False)
-            )
 
         with self._lock:
             self._call_count += 1
@@ -492,15 +554,6 @@ class MockLLMClient:
             model="mock",
             latency_s=0.001,
         )
-
-        self._cache.set(msg_hash, {
-            "content": resp.content,
-            "input_tokens": resp.input_tokens,
-            "output_tokens": resp.output_tokens,
-            "model": resp.model,
-            "is_fallback": resp.is_fallback
-        })
-
         return resp
 
     @property
