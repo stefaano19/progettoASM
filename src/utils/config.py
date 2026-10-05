@@ -112,6 +112,7 @@ class SimulationConfig:
     # Parametri StateMachine (prima letti con getattr ma mai caricabili da YAML)
     min_resistance_exposure: float = 0.12
     resistance_susceptibility_cutoff: float = 0.5
+    max_llm_failure_rate: float = 0.5   # oltre questa quota di chiamate fallite lo step si ferma
 
 
 @dataclass

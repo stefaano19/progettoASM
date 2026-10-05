@@ -213,3 +213,30 @@ def test_llm_seed_passed_to_backend(tmp_path, monkeypatch):
     client.chat(msgs)
     client.chat([{"role": "user", "content": "altro prompt"}])
     assert seen[0] is not None and seen[0] == seen[1] and seen[0] != seen[2]
+
+
+# ---------------------------------------------------------------------------
+# LLM non disponibile -> lo step si ferma senza modificare lo stato
+# ---------------------------------------------------------------------------
+
+def test_step_aborts_when_llm_down(cfg):
+    import logging
+    from src.orchestrator import SimulationOrchestrator
+    cfg.simulation.activation_probability = 1.0
+    logging.disable(logging.CRITICAL)
+    try:
+        o = SimulationOrchestrator.build_from_config(cfg, use_mock_llm=True)
+
+        def down(*args, **kwargs):
+            raise ConnectionError("Connection refused")
+
+        for agent in o._agents.values():
+            agent.llm_client.chat = down
+        before = o.network_manager.get_all_states()
+        with pytest.raises(RuntimeError, match="LLM"):
+            o._run_step(0)
+        assert o.network_manager.get_all_states() == before
+        assert o.next_step == 0          # lo step non risulta eseguito
+        o.close()
+    finally:
+        logging.disable(logging.NOTSET)

@@ -564,6 +564,25 @@ class SimulationOrchestrator:
                 self._agents[node_id].llm_client.chat, ctx.messages
             )
 
+        # --- 2b. CONTROLLO DISPONIBILITA' LLM ---
+        # Se la maggior parte delle chiamate fallisce (server vLLM morto o non
+        # partito) gli agenti non cambierebbero mai stato e lo step verrebbe
+        # registrato come se nulla fosse successo. Meglio fermarsi PRIMA di
+        # scrivere qualsiasi cosa: la fase PREPARE e' di sola lettura, quindi
+        # l'ultimo checkpoint resta valido per riprendere.
+        if futures:
+            concurrent.futures.wait(list(futures.values()))
+            n_failed = sum(1 for f in futures.values() if f.exception() is not None)
+            max_fail = getattr(self._cfg.simulation, "max_llm_failure_rate", 0.5)
+            if n_failed / len(futures) > max_fail:
+                executor.shutdown(wait=False, cancel_futures=True)
+                first_exc = next(f.exception() for f in futures.values() if f.exception())
+                raise RuntimeError(
+                    f"[Orchestrator] Step {step}: {n_failed}/{len(futures)} chiamate LLM "
+                    f"fallite (> {max_fail:.0%}). LLM non disponibile? Primo errore: "
+                    f"{first_exc!r}. Simulazione interrotta: riprendi dall'ultimo checkpoint."
+                )
+
         # --- 3. FINALIZE (sequenziale, stesso ordine — scritture su NetworkManager) ---
         # Ottimizzazione: raccoglie delta embedding e post in batch, poi applica
         # in un'unica operazione vettorizzata (evita N chiamate perturb_embedding).

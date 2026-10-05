@@ -93,3 +93,11 @@ R valeva +0.5 ("a metà strada verso I") mentre negli embedding R è spinto nell
 - Cella 8: parametro `VLLM_TENSOR_PARALLEL` (2 = usa entrambe le T4).
 - Valori di default della cella 10 riportati a una run nuova (`RESUME_FROM_CKPT = False`, nessun checkpoint precedente).
 - README: numero di archi del dataset corretto (967.632, non ~1,2 milioni), descrizione di rewiring, selezione dei seed e metriche, piano delle sessioni, risultati obsoleti rimossi.
+
+---
+
+# Terza revisione — installazione di vLLM
+
+- **Cella 0:** versioni fissate (`vllm==0.30.0`, `transformers==5.18.0`, `huggingface_hub==1.33.0`, `tokenizers==0.23.2`), le stesse delle sessioni funzionanti del 4 ottobre 2026. Con `pip install vllm` senza versione veniva installato `huggingface_hub` 2.1.1, incompatibile, e vLLM non partiva.
+- **Cella 9:** se vLLM non risponde il notebook si ferma con un errore, invece di proseguire senza LLM.
+- **Orchestratore:** se in uno step falliscono più del 50% delle chiamate LLM (`simulation.max_llm_failure_rate`), lo step si interrompe prima di modificare lo stato; l'ultimo checkpoint resta valido. Prima gli agenti senza risposta restavano fermi e lo step veniva registrato come se nulla fosse successo.
