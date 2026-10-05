@@ -102,7 +102,7 @@ progettoASM/
 ├── scripts/
 │   ├── check_propagation.py
 │   └── compare_phase3.py          # Effetto dell'intervento: run con fact-checker vs controllo
-├── tests/                         # Test pytest (94 test)
+├── tests/                         # Test pytest (96 test)
 ├── CHANGELOG_FIX.md               # Elenco delle correzioni
 └── results/                       # Risultati della run finale (vedi sotto); figures/ e checkpoints/
                                    # sono generati a runtime
@@ -169,7 +169,7 @@ Fase 0 → Fase 1 → Fase 2 → Fase 3
 
 Ogni fase salva automaticamente checkpoint (`.pkl`) e metriche (`metrics_history.csv`), così l'esecuzione può essere interrotta e ripresa — utile per superare i limiti di tempo delle sessioni Kaggle gratuite.
 
-Con l'LLM reale uno step dura circa 6 minuti su una T4. Piano delle sessioni Kaggle (limite 12 ore) usato per la run finale, con Fase 2 da 100 step:
+Con l'LLM reale uno step dura circa 6 minuti con vLLM su due T4 (`VLLM_TENSOR_PARALLEL = 2`), circa 12 su una sola. Piano delle sessioni Kaggle usato per i risultati (limite 12 ore per sessione), con Fase 2 da 100 step:
 
 | Sessione | Parametri | Contenuto |
 |---|---|---|
@@ -228,35 +228,43 @@ La Fase 0 non è toccata dalle correzioni, quindi questi valori restano validi.
 | Modularity Q | 0.8265 |
 | Echo Chamber Index | 0.8318 |
 
-### Fase 2 — Co-evoluzione (100 step, step 0–99)
+### Esecuzione
 
-Le run precedenti, eseguite con codice che conteneva errori nella dinamica e nelle metriche (elenco in `CHANGELOG_FIX.md`), sono state scartate. I numeri che seguono vengono dalla nuova esecuzione.
+Run del 4–5 ottobre 2026: LLM reale (Llama 3 8B Instruct AWQ su vLLM, 2 × T4), Fase 2 di 100 step (0–99) in due sessioni con ripresa da checkpoint, poi due run di Fase 3 da 30 step (100–129) partite dallo stesso checkpoint: una con 20 fact-checker e una di controllo senza. I dati completi sono in `results/` (`metrics_history.csv`, `metrics_history_control.csv`, `phase3_report.json`, `phase3_report_control.json`, `phase3_comparison.json`).
 
-| Step | S | I | R | ECI | Modularità | Polarizzazione | Opinion homophily | Belief assortativity |
-|---|---|---|---|---|---|---|---|---|
-| 0 | 3964 | 835 | 201 | 0.831 | 0.826 | 0.191 | 0.625 | 0.271 |
-| 25 | 1420 | 1840 | 1740 | 0.825 | 0.818 | 0.716 | 0.668 | 0.399 |
-| 49 | 1044 | 2039 | 1917 | 0.814 | 0.810 | 0.791 | 0.725 | 0.474 |
-| 75 | 930 | 2048 | 2022 | 0.806 | 0.798 | 0.814 | 0.745 | 0.517 |
-| 99 | 897 | 2045 | 2058 | 0.801 | 0.788 | 0.821 | 0.755 | 0.541 |
+### Fase 2 — Co-evoluzione (step 0–99)
 
-Il contagio si espande rapidamente nei primi 25 step e poi si stabilizza intorno a 2045 infetti. L'assortatività delle opinioni raddoppia (da 0.27 a 0.54), mentre l'ECI basato sulle community scende di poco (da 0.83 a 0.80). Le echo chamber che si formano seguono le opinioni, non le community iniziali della rete.
+| Step | S | I | R | ECI | Modularità | Opinion homophily | Belief assortativity |
+|---|---|---|---|---|---|---|---|
+| 0 | 3964 | 835 | 201 | 0.831 | 0.826 | 0.625 | 0.271 |
+| 25 | 1420 | 1840 | 1740 | 0.825 | 0.818 | 0.668 | 0.399 |
+| 49 | 1044 | 2039 | 1917 | 0.814 | 0.810 | 0.725 | 0.474 |
+| 75 | 930 | 2048 | 2022 | 0.806 | 0.798 | 0.745 | 0.517 |
+| 99 | 897 | 2045 | 2058 | 0.801 | 0.788 | 0.755 | 0.541 |
 
-### Fase 3 — Intervento vs controllo (30 step, step 100–129)
+- **Diffusione:** l'infezione cresce rapidamente nei primi 50 step e si stabilizza intorno al 41% dei nodi (picco di 2056 infetti allo step 56). I resistenti crescono più a lungo e alla fine superano gli infetti.
+- **Echo chamber di opinione:** la belief assortativity raddoppia (da 0.27 a 0.54) e l'opinion homophily sale da 0.63 a 0.76: i nodi tendono sempre più a essere connessi a chi la pensa come loro.
+- **Struttura per community:** ECI e modularità calano leggermente (da 0.831 a 0.801 e da 0.826 a 0.788). Le echo chamber che emergono non coincidono con le community iniziali della rete di co-autoraggio: si formano lungo le opinioni.
+- **Rewiring:** 2.500 archi sostituiti in 100 step (circa il 10% della rete) a densità costante. Alla fine la rete ha 46 componenti connesse invece di una: il rewiring non isola singoli nodi, ma può staccare piccoli gruppi.
 
-Le due run partono dallo stesso checkpoint di fine Fase 2 (step 99). Nella run con intervento CELF (obiettivo `threshold`, budget k = 20) inietta 20 fact-checker allo step 100; la run di controllo esegue gli stessi step senza fact-checker.
+### Fase 3 — Intervento con fact-checker vs controllo (step 100–129)
 
-Effetto dell'intervento allo step 129 (run con fact-checker meno controllo):
+L'intervento è partito con un infection rate di 0.409, sopra la soglia di attivazione (0.4), quindi senza forzature. CELF (obiettivo `threshold`) ha scelto 20 nodi suscettibili, con una stima di 163 nodi coperti.
 
-| Metrica | Con fact-checker | Controllo | Effetto |
+| Metrica (step 129) | Con fact-checker | Controllo | Effetto |
 |---|---|---|---|
-| Suscettibili (S) | 699 | 855 | −156, di cui 20 sono i seed |
-| Infetti (I) | 2040 | 2056 | −16 |
-| Resistenti (R) | 2241 | 2089 | +152 |
+| Nodi S | 699 | 855 | −156 (di cui 20 sono i seed diventati F) |
+| Nodi I | 2040 | 2056 | −16 |
+| Nodi R | 2241 | 2089 | +152 |
+| Infection rate | 0.408 | 0.411 | −0.003 |
 | Belief assortativity | 0.557 | 0.544 | +0.013 |
-| ECI / modularità | 0.791 / 0.774 | 0.792 / 0.777 | praticamente uguali |
+| Opinion homophily | 0.756 | 0.756 | 0.000 |
+| Belief polarisation | 0.858 | 0.829 | +0.029 |
+| Echo Chamber Index | 0.791 | 0.792 | −0.001 |
+| Modularità | 0.774 | 0.777 | −0.004 |
+| Transizioni totali in 30 step | 191 | 59 | +132 |
 
-Andamento nel tempo:
+Andamento nel tempo (S e I, run con fact-checker = FC):
 
 | Step | S (FC) | S (controllo) | I (FC) | I (controllo) |
 |---|---|---|---|---|
@@ -267,17 +275,12 @@ Andamento nel tempo:
 | 119 | 718 | 875 | 2041 | 2048 |
 | 129 | 699 | 855 | 2040 | 2056 |
 
-Con i fact-checker i suscettibili scendono rapidamente nei primi step, mentre nel controllo calano lentamente. Gli infetti invece divergono lentamente: nel controllo continuano a crescere di poco (da 2045 a 2056), mentre con i fact-checker scendono leggermente (a 2040).
+Con i fact-checker i suscettibili scendono rapidamente nei primi step, mentre nel controllo calano lentamente; gli infetti invece divergono solo col tempo.
 
-**Cosa significa:**
-
-- **Protezione dei suscettibili.** È l'effetto principale: 136 nodi in più passano a resistenti, quasi tutti nei primi 10 step. CELF aveva stimato 163 nodi coperti, quindi la previsione era nell'ordine di grandezza giusto.
-- **Infetti.** L'effetto diretto è quasi nullo, ma ce n'è uno indiretto che cresce col tempo. Nel controllo gli infetti continuano a salire; con i fact-checker scendono leggermente, perché i suscettibili protetti non possono più essere contagiati.
-- **Echo chamber.** L'intervento non le riduce: aumenta leggermente l'assortatività delle opinioni, perché i nodi protetti diventano resistenti accanto ad altri resistenti.
-
-L'effetto sui suscettibili è netto. Quelli sugli infetti e sull'assortatività sono piccoli: con una sola run per configurazione vanno letti con cautela (vedi [Limitazioni](#limitazioni-e-sviluppi-futuri)).
-
-> **Nota sui delta dei report.** In `phase3_report*.json` i delta topologici (`delta_num_connected_components`, `delta_avg_clustering`, `delta_max_degree`, `delta_std_degree`) sono calcolati rispetto al baseline della Fase 0, non all'inizio della Fase 3: includono tutto il rewiring della Fase 2 e sono quasi identici nelle due run. Non vanno usati come effetto dell'intervento. Per l'effetto si usa il confronto con il controllo (`phase3_comparison.json`).
+- **Protezione dei suscettibili:** l'effetto principale. I fact-checker convertono in resistenti 136 suscettibili in più rispetto al controllo (156 meno i 20 seed), quasi tutti nei primi 10 step (circa 20 per step all'inizio, 2–3 alla fine). La stima di CELF (163 nodi) era nell'ordine di grandezza giusto.
+- **Infetti:** l'effetto diretto è quasi nullo, perché un infetto si converte solo se almeno un quarto dei vicini è fact-checker (alla fine solo 9 nodi soddisfano le soglie). Compare però un effetto indiretto che cresce nel tempo: nel controllo gli infetti continuano a salire (da 2045 a 2056), con i fact-checker scendono leggermente (a 2040). I suscettibili protetti non sono più contagiabili, quindi la differenza aumenta step dopo step (da 0 a −16).
+- **Echo chamber:** l'intervento non le riduce e anzi aumenta leggermente la belief assortativity (+0.013). I nodi protetti diventano resistenti accanto ad altri resistenti, rafforzando i gruppi di opinione esistenti. Anche la polarizzazione cresce, perché nodi neutrali (S) passano a una posizione netta (R).
+- **Struttura:** ECI e modularità sono praticamente uguali nelle due run: l'intervento agisce sulle opinioni, non sulla topologia.
 
 ### File dei risultati
 
@@ -292,14 +295,17 @@ L'effetto sui suscettibili è netto. Quelli sugli infetti e sull'assortatività 
 
 ### Conclusioni
 
-- La co-evoluzione tra opinioni e topologia produce echo chamber ideologiche: l'assortatività delle opinioni raddoppia in 100 step, mentre la struttura a community iniziale si indebolisce solo leggermente.
-- Un intervento di 20 fact-checker scelti con CELF protegge in modo netto i suscettibili (136 nodi resi resistenti, in linea con la stima di 163), ma non recupera quasi nessuno degli infetti.
-- L'effetto sugli infetti è indiretto e cresce nel tempo, perché riduce il bacino dei contagiabili. L'intervento non riduce le echo chamber: le rafforza leggermente.
-- Un intervento più precoce, prima che il contagio si stabilizzi, dovrebbe avere un effetto maggiore.
+1. Gli agenti LLM producono una dinamica di diffusione realistica: crescita rapida, saturazione intorno al 41% e comparsa spontanea di resistenti.
+2. La co-evoluzione genera echo chamber di **opinione** (assortatività da 0.27 a 0.54) mentre la struttura per community si indebolisce: misurarle solo con l'ECI strutturale le avrebbe fatte sembrare in diminuzione.
+3. Un intervento tardivo con 20 fact-checker (0,4% dei nodi) protegge una parte dei suscettibili ma lascia quasi invariata la popolazione infetta già consolidata. Con le regole del modello, il fact-checking funziona come prevenzione più che come cura.
+4. L'intervento non riduce la polarizzazione: la rafforza leggermente, perché sposta nodi neutrali su posizioni nette.
+
+> **Nota sui report.** Nei file `phase3_report*.json` i campi `delta_avg_clustering`, `delta_num_connected_components` e gli altri delta topologici misurano il cambiamento rispetto alla Fase 0, non rispetto allo step 99, a causa di un errore di cache corretto dopo la run (vedi `CHANGELOG_FIX.md`, quarta revisione). I valori finali, gli stati, ECI, modularità e le metriche di opinione sono corretti.
 
 ## Limitazioni e Sviluppi Futuri
 
-- **Una sola realizzazione.** Ogni configurazione viene eseguita una volta: con il costo attuale (circa 6 minuti per step, 130 step per run) non è possibile ripetere le run con seed diversi. L'effetto sui suscettibili (−156) è netto, ma quelli sugli infetti (−16) e sull'assortatività (+0.013) sono piccoli e vanno presentati con cautela.
+- **Una sola realizzazione.** Ogni configurazione viene eseguita una volta: con il costo attuale (circa 6 minuti per step) non è stato possibile ripetere le run con seed diversi. L'effetto sui suscettibili (−136 nodi) è netto; quelli sugli infetti (−16) e sull'assortatività (+0.013) sono piccoli e andrebbero confermati con più repliche.
+- **Frammentazione.** Il rewiring a densità costante ha staccato dalla rete 45 piccoli gruppi di nodi. Un vincolo di connettività sulle rimozioni renderebbe la rete più realistica.
 - **Ripetibilità dell'LLM.** Il seed per richiesta rende ripetibili le risposte a parità di prompt, ma vLLM non garantisce il determinismo completo con batching variabile.
 - **Obiettivo di selezione miope.** L'obiettivo `threshold` considera l'effetto immediato dei fact-checker sui vicini, non la dinamica futura (ricadute, rewiring, risposte dell'LLM).
 - **Community statiche.** ECI e modularità usano le community della Fase 0; i cambiamenti di opinione sono misurati dalle metriche di assortatività e omofilia.
