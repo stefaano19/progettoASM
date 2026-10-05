@@ -287,6 +287,7 @@ L'effetto sui suscettibili è netto. Quelli sugli infetti e sull'assortatività 
 | `results/metrics_history_control.csv` | Metriche per step, Fase 2 + Fase 3 di controllo |
 | `results/phase3_report.json` | Report finale della run con fact-checker (seed CELF, reach, copertura) |
 | `results/phase3_report_control.json` | Report finale della run di controllo |
+| `results/pipeline_summary_control.json` | Riepilogo dell'intera pipeline per la run di controllo |
 | `results/phase3_comparison.json` | Confronto intervento − controllo prodotto da `scripts/compare_phase3.py` |
 
 ### Conclusioni
