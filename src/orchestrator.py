@@ -207,7 +207,12 @@ class SimulationOrchestrator:
         # --- Embeddings ---
         em = EmbeddingManager(cfg)
         if embedding_path.exists():
-            embeddings = em.load()
+            # FIX: embeddings.npy e' scritto da extract_subgraph con le feature
+            # OGB grezze (non normalizzate). Normalizziamo come in
+            # EmbeddingManager.initialize, cosi' la perturbazione degli agenti
+            # (max 0.025 per step) ha lo stesso peso relativo per ogni nodo.
+            # Dopo un resume gli embedding vengono comunque dal checkpoint.
+            embeddings = em._l2_normalize(em.load().astype(np.float32))
         else:
             embeddings = em.initialize(subG, raw_features)
             em.save(embeddings)
