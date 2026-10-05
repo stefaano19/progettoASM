@@ -240,3 +240,20 @@ def test_step_aborts_when_llm_down(cfg):
         o.close()
     finally:
         logging.disable(logging.NOTSET)
+
+
+# ---------------------------------------------------------------------------
+# Cache metriche: stesso numero di archi ma grafo diverso
+# ---------------------------------------------------------------------------
+
+def test_metrics_cache_detects_swapped_edges(cfg):
+    from src.graph.metrics import compute_all_metrics
+    G1 = nx.cycle_graph(30)                  # 30 archi, 1 componente
+    G2 = nx.cycle_graph(30)
+    G2.remove_edge(0, 1); G2.add_edge(0, 15)  # stesso numero di archi
+    G2.remove_edge(10, 11); G2.add_edge(20, 25)  # ora 2 componenti
+    cm = {n: 0 for n in G1.nodes()}
+    m1 = compute_all_metrics(G1, cfg, cm)
+    m2 = compute_all_metrics(G2, cfg, cm)
+    assert m1["num_connected_components"] == 1
+    assert m2["num_connected_components"] == nx.number_connected_components(G2) > 1

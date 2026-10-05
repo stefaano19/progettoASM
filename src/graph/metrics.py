@@ -519,6 +519,14 @@ _CACHE: dict = {
     "community_map_id": None,  # id() della community_map per rilevare ricalcoli
 }
 
+def _edge_fingerprint(G: nx.Graph) -> tuple[int, int]:
+    """Impronta dell'insieme di archi (indipendente dall'ordine)."""
+    return (
+        G.number_of_edges(),
+        hash(frozenset((u, v) if u <= v else (v, u) for u, v in G.edges())),
+    )
+
+
 def compute_all_metrics(
     G: nx.Graph,
     cfg: "Config",
@@ -530,11 +538,16 @@ def compute_all_metrics(
     Calcola tutte le metriche disponibili in un unico dict.
     Adatto per logging a ogni step temporale.
     Ottimizzato con caching a due livelli:
-      - metriche topologiche: ricalcolate solo se num_edges cambia
-      - ECI/modularity: ricalcolate solo se num_edges o community_map cambiano
+      - metriche topologiche: ricalcolate solo se l'INSIEME degli archi cambia
+      - ECI/modularity: ricalcolate se cambiano gli archi o la community_map
+
+    FIX: prima la cache era indicizzata sul solo numero di archi. Con il
+    rewiring a densita' costante (swap) il numero non cambia mai, quindi un
+    grafo diverso con lo stesso numero di archi riceveva le metriche di un
+    altro grafo (es. il "prima" della Fase 3 riceveva i valori della Fase 0).
     """
     global _CACHE
-    m = G.number_of_edges()
+    m = _edge_fingerprint(G)
     cm_id = id(community_map) if community_map is not None else None
 
     topo_stale = (

@@ -101,3 +101,11 @@ R valeva +0.5 ("a metà strada verso I") mentre negli embedding R è spinto nell
 - **Cella 0:** versioni fissate (`vllm==0.30.0`, `transformers==5.18.0`, `huggingface_hub==1.33.0`, `tokenizers==0.23.2`), le stesse delle sessioni funzionanti del 4 ottobre 2026. Con `pip install vllm` senza versione veniva installato `huggingface_hub` 2.1.1, incompatibile, e vLLM non partiva.
 - **Cella 9:** se vLLM non risponde il notebook si ferma con un errore, invece di proseguire senza LLM.
 - **Orchestratore:** se in uno step falliscono più del 50% delle chiamate LLM (`simulation.max_llm_failure_rate`), lo step si interrompe prima di modificare lo stato; l'ultimo checkpoint resta valido. Prima gli agenti senza risposta restavano fermi e lo step veniva registrato come se nulla fosse successo.
+
+---
+
+# Quarta revisione — cache delle metriche topologiche
+
+- **`src/graph/metrics.py`:** la cache di `compute_all_metrics` era indicizzata sul solo numero di archi. Con il rewiring a densità costante il numero non cambia mai, quindi un grafo diverso riceveva le metriche di un altro: nella Fase 3 il "prima" dell'intervento riceveva clustering, componenti e gradi della Fase 0. Ora la cache usa un'impronta dell'insieme degli archi (circa 13 ms su 26.000 archi).
+- **Notebook:** `VLLM_TENSOR_PARALLEL = 2` come default (entrambe le T4, circa 6 minuti per step invece di 12) e ricerca automatica in `/kaggle/input` del checkpoint e del CSV se il percorso indicato non esiste.
+- **Impatto sulle run del 5 ottobre 2026:** nei report di Fase 3 i delta di clustering, componenti connesse e gradi misurano il cambiamento rispetto alla Fase 0, non rispetto all'inizio dell'intervento. I valori finali, gli stati, ECI, modularità e metriche di opinione sono corretti, quindi il confronto intervento/controllo resta valido.
