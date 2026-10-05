@@ -155,7 +155,6 @@ class TestMockLLMClient:
         assert r1.content == r2.content
 
     def test_call_count_increments(self, mock_llm):
-        mock_llm._cache.cache.clear()
         for i in range(5):
             mock_llm.chat([{"role": "user", "content": f"x {i}"}])
         assert mock_llm.call_count == 5

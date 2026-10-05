@@ -71,20 +71,26 @@ simulation:
     where researchers selectively engage only with like-minded peers, forming
     self-reinforcing information bubbles that reduce cross-community knowledge.
   initial_infection_rate: 0.15    # % nodi inizialmente in stato I (pazienti zero)
-  activation_probability: 0.7     # % di nodi attivati ad ogni step 
+  activation_probability: 0.15    # % di nodi attivati ad ogni step (= notebook Kaggle)
   memory_window:          3        # sliding window: ultimi N post dei vicini
   rewiring_cooldown:      2        # step di cooldown tra rewiring consecutivi
   checkpoint_every:       1       # salva checkpoint ogni N step
   seeder_strategy:        "combined" # strategia selezione pazienti zero
   min_resistance_exposure: 0.12      # S -> R richiede almeno questa frazione di vicini I
   resistance_susceptibility_cutoff: 0.5  # ... e susceptibility LLM sotto questa soglia
+  base_threshold_mean:    0.3        # soglia LT base per nodo ~ N(mean, std), clippata in [0.05, 0.95]
+  base_threshold_std:     0.1
+  relapse_threshold:      0.6        # R -> I se frazione vicini I >= soglia ...
+  relapse_min_susceptibility: 0.8    # ... susceptibility > valore e proposed_state = I
+  max_llm_failure_rate:   0.5        # step interrotto se eccezioni + fallback LLM superano questa quota
+  smart_cache:            false      # true = riusa la risposta se feed/vicinato invariati (congela gli agenti)
 
 # ---------------------------------------------------------------------------
 # LLM Backend  (Fase 1-2)
 # ---------------------------------------------------------------------------
 llm:
-  backend: "api"           # "api" | "local"  (il notebook Kaggle forza "local" = vLLM)
-  max_concurrent_requests: 1     # Ollama: inferenza sequenziale
+  backend: "local"         # "api" | "local"  (local = server OpenAI-compatibile, vLLM su Kaggle)
+  max_concurrent_requests: 150   # vLLM fa il batching (= notebook Kaggle); Ollama: 1
 
   api:
     provider:      "gemini"
@@ -92,12 +98,14 @@ llm:
     temperature:   0.7
     max_tokens:    512
     api_key_env:   "GEMINI_API_KEY"
+    timeout:       300             # secondi per richiesta, poi retry e fallback
 
   local:
-    base_url:      "http://localhost:11434/v1"
-    model:         "llama3:8b"
+    base_url:      "http://localhost:8000/v1"                # vLLM (Ollama: http://localhost:11434/v1)
+    model:         "casperhansen/llama-3-8b-instruct-awq"    # = notebook Kaggle
     temperature:   0.7
     max_tokens:    512
+    timeout:       300             # secondi per richiesta, poi retry e fallback
 
   token_budget:
     warn_at:       999999999
@@ -107,10 +115,10 @@ llm:
 # GNN  (Fase 2)
 # ---------------------------------------------------------------------------
 gnn:
-  model:              "graphsage"    # "graphsage" | "gcn"
+  model:              "graphsage"    # NON usato: il modello e' sempre GraphSAGE
   hidden_dim:         128
-  num_layers:         2
-  dropout:            0.3
+  num_layers:         2              # NON usato: il modello ha sempre 2 layer
+  dropout:            0.3            # NON usato: nessun dropout nel modello
   lr:                 0.001
   epochs_per_step:    15             # fine-tuning step ad ogni tick temporale
   embedding_dim:      128
@@ -133,7 +141,7 @@ influence:
   celf_objective:     "threshold"    # threshold = obiettivo allineato alla StateMachine (deterministico)
                                      # ic = Independent Cascade Monte Carlo (modello originale)
   reach_hops:         1              # raggio (in salti) della metrica di reach dei fact-checker
-  activation_threshold: 0.4         # soglia infection_rate per attivare CELF
-  celf_interval:      15             # ogni quanti step riesegui CELF
+  activation_threshold: 0.4         # soglia infection_rate per attivare CELF (notebook: FORCE_INJECTION la ignora)
+  celf_interval:      15             # NON usato: CELF viene eseguito una sola volta a inizio Fase 3
   fc_resistance_threshold: 0.25      # I -> R se frazione vicini F >= soglia
   fc_protection_threshold: 0.10      # S -> R (inoculazione) se frazione vicini F >= soglia
