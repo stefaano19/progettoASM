@@ -1,0 +1,231 @@
+{
+  "finale": {
+    "infection_rate": {
+      "intervento": 0.408,
+      "controllo": 0.4112,
+      "effetto": -0.003200000000000036
+    },
+    "n_S": {
+      "intervento": 699,
+      "controllo": 855,
+      "effetto": -156
+    },
+    "n_I": {
+      "intervento": 2040,
+      "controllo": 2056,
+      "effetto": -16
+    },
+    "n_R": {
+      "intervento": 2241,
+      "controllo": 2089,
+      "effetto": 152
+    },
+    "echo_chamber_index": {
+      "intervento": 0.7908202764838487,
+      "controllo": 0.7922626462942544,
+      "effetto": -0.001442369810405686
+    },
+    "modularity_q": {
+      "intervento": 0.773572127012452,
+      "controllo": 0.7771613989430494,
+      "effetto": -0.0035892719305973264
+    },
+    "belief_polarisation": {
+      "intervento": 0.8582463599999999,
+      "controllo": 0.8289564399999998,
+      "effetto": 0.02928992000000008
+    },
+    "opinion_homophily": {
+      "intervento": 0.7560390154690239,
+      "controllo": 0.7563438238207727,
+      "effetto": -0.000304808351748842
+    },
+    "belief_assortativity": {
+      "intervento": 0.5568305697208806,
+      "controllo": 0.5435003046978709,
+      "effetto": 0.013330265023009713
+    }
+  },
+  "per_step": [
+    {
+      "step": 100,
+      "I_intervento": 2045,
+      "I_controllo": 2045,
+      "effetto_I": 0
+    },
+    {
+      "step": 101,
+      "I_intervento": 2045,
+      "I_controllo": 2045,
+      "effetto_I": 0
+    },
+    {
+      "step": 102,
+      "I_intervento": 2045,
+      "I_controllo": 2046,
+      "effetto_I": -1
+    },
+    {
+      "step": 103,
+      "I_intervento": 2044,
+      "I_controllo": 2046,
+      "effetto_I": -2
+    },
+    {
+      "step": 104,
+      "I_intervento": 2044,
+      "I_controllo": 2046,
+      "effetto_I": -2
+    },
+    {
+      "step": 105,
+      "I_intervento": 2044,
+      "I_controllo": 2045,
+      "effetto_I": -1
+    },
+    {
+      "step": 106,
+      "I_intervento": 2043,
+      "I_controllo": 2045,
+      "effetto_I": -2
+    },
+    {
+      "step": 107,
+      "I_intervento": 2044,
+      "I_controllo": 2047,
+      "effetto_I": -3
+    },
+    {
+      "step": 108,
+      "I_intervento": 2044,
+      "I_controllo": 2046,
+      "effetto_I": -2
+    },
+    {
+      "step": 109,
+      "I_intervento": 2044,
+      "I_controllo": 2046,
+      "effetto_I": -2
+    },
+    {
+      "step": 110,
+      "I_intervento": 2043,
+      "I_controllo": 2045,
+      "effetto_I": -2
+    },
+    {
+      "step": 111,
+      "I_intervento": 2043,
+      "I_controllo": 2046,
+      "effetto_I": -3
+    },
+    {
+      "step": 112,
+      "I_intervento": 2043,
+      "I_controllo": 2046,
+      "effetto_I": -3
+    },
+    {
+      "step": 113,
+      "I_intervento": 2043,
+      "I_controllo": 2046,
+      "effetto_I": -3
+    },
+    {
+      "step": 114,
+      "I_intervento": 2042,
+      "I_controllo": 2046,
+      "effetto_I": -4
+    },
+    {
+      "step": 115,
+      "I_intervento": 2041,
+      "I_controllo": 2047,
+      "effetto_I": -6
+    },
+    {
+      "step": 116,
+      "I_intervento": 2041,
+      "I_controllo": 2047,
+      "effetto_I": -6
+    },
+    {
+      "step": 117,
+      "I_intervento": 2041,
+      "I_controllo": 2047,
+      "effetto_I": -6
+    },
+    {
+      "step": 118,
+      "I_intervento": 2041,
+      "I_controllo": 2048,
+      "effetto_I": -7
+    },
+    {
+      "step": 119,
+      "I_intervento": 2041,
+      "I_controllo": 2048,
+      "effetto_I": -7
+    },
+    {
+      "step": 120,
+      "I_intervento": 2041,
+      "I_controllo": 2050,
+      "effetto_I": -9
+    },
+    {
+      "step": 121,
+      "I_intervento": 2041,
+      "I_controllo": 2051,
+      "effetto_I": -10
+    },
+    {
+      "step": 122,
+      "I_intervento": 2041,
+      "I_controllo": 2051,
+      "effetto_I": -10
+    },
+    {
+      "step": 123,
+      "I_intervento": 2041,
+      "I_controllo": 2051,
+      "effetto_I": -10
+    },
+    {
+      "step": 124,
+      "I_intervento": 2041,
+      "I_controllo": 2050,
+      "effetto_I": -9
+    },
+    {
+      "step": 125,
+      "I_intervento": 2040,
+      "I_controllo": 2051,
+      "effetto_I": -11
+    },
+    {
+      "step": 126,
+      "I_intervento": 2040,
+      "I_controllo": 2053,
+      "effetto_I": -13
+    },
+    {
+      "step": 127,
+      "I_intervento": 2041,
+      "I_controllo": 2051,
+      "effetto_I": -10
+    },
+    {
+      "step": 128,
+      "I_intervento": 2040,
+      "I_controllo": 2053,
+      "effetto_I": -13
+    },
+    {
+      "step": 129,
+      "I_intervento": 2040,
+      "I_controllo": 2056,
+      "effetto_I": -16
+    }
+  ]
+}

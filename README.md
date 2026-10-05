@@ -104,8 +104,8 @@ progettoASM/
 │   └── compare_phase3.py          # Effetto dell'intervento: run con fact-checker vs controllo
 ├── tests/                         # Test pytest (94 test)
 ├── CHANGELOG_FIX.md               # Elenco delle correzioni
-└── results/                       # Generati a runtime: metrics_history.csv, phase3_report*.json,
-                                   # pipeline_summary*.json, figures/, checkpoints/
+└── results/                       # Risultati della run finale (vedi sotto); figures/ e checkpoints/
+                                   # sono generati a runtime
 ```
 
 ## Installazione
@@ -169,16 +169,22 @@ Fase 0 → Fase 1 → Fase 2 → Fase 3
 
 Ogni fase salva automaticamente checkpoint (`.pkl`) e metriche (`metrics_history.csv`), così l'esecuzione può essere interrotta e ripresa — utile per superare i limiti di tempo delle sessioni Kaggle gratuite.
 
-Con l'LLM reale uno step dura circa 12 minuti (≈ 560 chiamate LLM per step su una T4). Piano tipico delle sessioni Kaggle (limite 12 ore):
+Con l'LLM reale uno step dura circa 6 minuti su una T4. Piano delle sessioni Kaggle (limite 12 ore) usato per la run finale, con Fase 2 da 100 step:
 
 | Sessione | Parametri | Contenuto |
 |---|---|---|
 | 1 | `PHASE2_STEPS=50`, `PHASE3_STEPS=0` | Fase 0 + step 0–49 |
-| 2 | resume, `PHASE2_STEPS=46`, `PHASE3_STEPS=0` | step 50–95 |
-| 3 | resume dal checkpoint finale, `PHASE2_STEPS=0`, `PHASE3_STEPS=30` | Fase 3 con fact-checker |
-| 4 | stesso checkpoint della sessione 3, `CONTROL_RUN=True` | Fase 3 di controllo |
+| 2 | resume, `PHASE2_STEPS=50`, `PHASE3_STEPS=0` | step 50–99 |
+| 3 | resume dal checkpoint finale, `PHASE2_STEPS=0`, `PHASE3_STEPS=30` | Fase 3 con fact-checker (step 100–129) |
+| 4 | stesso checkpoint della sessione 3, `CONTROL_RUN=True` | Fase 3 di controllo (step 100–129) |
 
-Poi: `python scripts/compare_phase3.py --treatment phase3_report.json --control phase3_report_control.json`.
+Poi:
+
+```bash
+python scripts/compare_phase3.py \
+    --treatment results/phase3_report.json --control results/phase3_report_control.json \
+    --csv results/metrics_history.csv --csv-control results/metrics_history_control.csv
+```
 
 ## Le Quattro Fasi
 
@@ -222,13 +228,77 @@ La Fase 0 non è toccata dalle correzioni, quindi questi valori restano validi.
 | Modularity Q | 0.8265 |
 | Echo Chamber Index | 0.8318 |
 
-### Fasi 2 e 3
+### Fase 2 — Co-evoluzione (100 step, step 0–99)
 
-> **Risultati da rigenerare.** Le run precedenti (inclusa quella da 96 step dell'1–2 ottobre 2026) sono state eseguite con versioni del codice che contenevano errori nella dinamica e nelle metriche: candidati del rewiring sempre uguali, soglie dei nodi che cambiavano a ogni ripresa, reach dei fact-checker sempre pari a 1, codifiche delle opinioni incoerenti, Fase 3 senza step post-intervento. L'elenco completo è in `CHANGELOG_FIX.md`. I loro numeri non vanno citati: questa sezione verrà aggiornata con la nuova esecuzione (Fase 2 da 96 step, Fase 3 con fact-checker e di controllo, 30 step ciascuna).
+Le run precedenti, eseguite con codice che conteneva errori nella dinamica e nelle metriche (elenco in `CHANGELOG_FIX.md`), sono state scartate. I numeri che seguono vengono dalla nuova esecuzione.
+
+| Step | S | I | R | ECI | Modularità | Polarizzazione | Opinion homophily | Belief assortativity |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 3964 | 835 | 201 | 0.831 | 0.826 | 0.191 | 0.625 | 0.271 |
+| 25 | 1420 | 1840 | 1740 | 0.825 | 0.818 | 0.716 | 0.668 | 0.399 |
+| 49 | 1044 | 2039 | 1917 | 0.814 | 0.810 | 0.791 | 0.725 | 0.474 |
+| 75 | 930 | 2048 | 2022 | 0.806 | 0.798 | 0.814 | 0.745 | 0.517 |
+| 99 | 897 | 2045 | 2058 | 0.801 | 0.788 | 0.821 | 0.755 | 0.541 |
+
+Il contagio si espande rapidamente nei primi 25 step e poi si stabilizza intorno a 2045 infetti. L'assortatività delle opinioni raddoppia (da 0.27 a 0.54), mentre l'ECI basato sulle community scende di poco (da 0.83 a 0.80). Le echo chamber che si formano seguono le opinioni, non le community iniziali della rete.
+
+### Fase 3 — Intervento vs controllo (30 step, step 100–129)
+
+Le due run partono dallo stesso checkpoint di fine Fase 2 (step 99). Nella run con intervento CELF (obiettivo `threshold`, budget k = 20) inietta 20 fact-checker allo step 100; la run di controllo esegue gli stessi step senza fact-checker.
+
+Effetto dell'intervento allo step 129 (run con fact-checker meno controllo):
+
+| Metrica | Con fact-checker | Controllo | Effetto |
+|---|---|---|---|
+| Suscettibili (S) | 699 | 855 | −156, di cui 20 sono i seed |
+| Infetti (I) | 2040 | 2056 | −16 |
+| Resistenti (R) | 2241 | 2089 | +152 |
+| Belief assortativity | 0.557 | 0.544 | +0.013 |
+| ECI / modularità | 0.791 / 0.774 | 0.792 / 0.777 | praticamente uguali |
+
+Andamento nel tempo:
+
+| Step | S (FC) | S (controllo) | I (FC) | I (controllo) |
+|---|---|---|---|---|
+| 99 | 897 | 897 | 2045 | 2045 |
+| 100 | 856 | 896 | 2045 | 2045 |
+| 105 | 782 | 891 | 2044 | 2045 |
+| 110 | 746 | 883 | 2043 | 2045 |
+| 119 | 718 | 875 | 2041 | 2048 |
+| 129 | 699 | 855 | 2040 | 2056 |
+
+Con i fact-checker i suscettibili scendono rapidamente nei primi step, mentre nel controllo calano lentamente. Gli infetti invece divergono lentamente: nel controllo continuano a crescere di poco (da 2045 a 2056), mentre con i fact-checker scendono leggermente (a 2040).
+
+**Cosa significa:**
+
+- **Protezione dei suscettibili.** È l'effetto principale: 136 nodi in più passano a resistenti, quasi tutti nei primi 10 step. CELF aveva stimato 163 nodi coperti, quindi la previsione era nell'ordine di grandezza giusto.
+- **Infetti.** L'effetto diretto è quasi nullo, ma ce n'è uno indiretto che cresce col tempo. Nel controllo gli infetti continuano a salire; con i fact-checker scendono leggermente, perché i suscettibili protetti non possono più essere contagiati.
+- **Echo chamber.** L'intervento non le riduce: aumenta leggermente l'assortatività delle opinioni, perché i nodi protetti diventano resistenti accanto ad altri resistenti.
+
+L'effetto sui suscettibili è netto. Quelli sugli infetti e sull'assortatività sono piccoli: con una sola run per configurazione vanno letti con cautela (vedi [Limitazioni](#limitazioni-e-sviluppi-futuri)).
+
+> **Nota sui delta dei report.** In `phase3_report*.json` i delta topologici (`delta_num_connected_components`, `delta_avg_clustering`, `delta_max_degree`, `delta_std_degree`) sono calcolati rispetto al baseline della Fase 0, non all'inizio della Fase 3: includono tutto il rewiring della Fase 2 e sono quasi identici nelle due run. Non vanno usati come effetto dell'intervento. Per l'effetto si usa il confronto con il controllo (`phase3_comparison.json`).
+
+### File dei risultati
+
+| File | Contenuto |
+|---|---|
+| `results/metrics_history.csv` | Metriche per step, Fase 2 + Fase 3 con fact-checker |
+| `results/metrics_history_control.csv` | Metriche per step, Fase 2 + Fase 3 di controllo |
+| `results/phase3_report.json` | Report finale della run con fact-checker (seed CELF, reach, copertura) |
+| `results/phase3_report_control.json` | Report finale della run di controllo |
+| `results/phase3_comparison.json` | Confronto intervento − controllo prodotto da `scripts/compare_phase3.py` |
+
+### Conclusioni
+
+- La co-evoluzione tra opinioni e topologia produce echo chamber ideologiche: l'assortatività delle opinioni raddoppia in 100 step, mentre la struttura a community iniziale si indebolisce solo leggermente.
+- Un intervento di 20 fact-checker scelti con CELF protegge in modo netto i suscettibili (136 nodi resi resistenti, in linea con la stima di 163), ma non recupera quasi nessuno degli infetti.
+- L'effetto sugli infetti è indiretto e cresce nel tempo, perché riduce il bacino dei contagiabili. L'intervento non riduce le echo chamber: le rafforza leggermente.
+- Un intervento più precoce, prima che il contagio si stabilizzi, dovrebbe avere un effetto maggiore.
 
 ## Limitazioni e Sviluppi Futuri
 
-- **Una sola realizzazione.** Ogni configurazione viene eseguita una volta: con il costo attuale (circa 12 minuti per step) non è possibile ripetere le run con seed diversi. Le differenze piccole tra intervento e controllo vanno lette con cautela.
+- **Una sola realizzazione.** Ogni configurazione viene eseguita una volta: con il costo attuale (circa 6 minuti per step, 130 step per run) non è possibile ripetere le run con seed diversi. L'effetto sui suscettibili (−156) è netto, ma quelli sugli infetti (−16) e sull'assortatività (+0.013) sono piccoli e vanno presentati con cautela.
 - **Ripetibilità dell'LLM.** Il seed per richiesta rende ripetibili le risposte a parità di prompt, ma vLLM non garantisce il determinismo completo con batching variabile.
 - **Obiettivo di selezione miope.** L'obiettivo `threshold` considera l'effetto immediato dei fact-checker sui vicini, non la dinamica futura (ricadute, rewiring, risposte dell'LLM).
 - **Community statiche.** ECI e modularità usano le community della Fase 0; i cambiamenti di opinione sono misurati dalle metriche di assortatività e omofilia.
