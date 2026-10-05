@@ -488,7 +488,7 @@ class SimulationOrchestrator:
                 # Copia il checkpoint
                 ckpt_name = f"ckpt_step_{step:04d}.pkl"
                 # Percorso restituito da CheckpointManager.save (puo' essere una
-                # sottocartella, es. Fase 3 in phase3_run.py)
+                # sottocartella)
                 ckpt_src = ckpt_path or (
                     self._cfg.project_root / self._cfg.paths.checkpoints / ckpt_name
                 )

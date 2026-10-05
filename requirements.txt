@@ -44,9 +44,5 @@ rich>=13.7               # output terminale formattato
 jupyter>=1.0
 ipykernel>=6.29
 
-# --- Testing ---
-pytest>=8.0
-pytest-cov>=5.0
-
 # --- Utility ---
 python-dotenv>=1.0       # caricamento .env per API keys
