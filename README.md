@@ -97,7 +97,7 @@ progettoASM/
 │       ├── checkpoint.py          # CheckpointManager (resume tra sessioni)
 │       ├── config.py              # Caricamento di config.yaml in dataclass
 │       └── seed.py                # Riproducibilità (set_all_seeds)
-├── relazione/                     # Relazione tecnica (LaTeX)
+├── relazione/                     # Relazione tecnica (LaTeX + PDF)
 └── results/                       # Generata a runtime: metriche, report, figure, log, checkpoint
 ```
 
@@ -201,6 +201,8 @@ CELF sceglie `CELF_BUDGET_K` nodi suscettibili e li converte in fact-checker (st
 - **Diagnostica per step** (log JSONL): chiamate LLM, risposte di fallback, distribuzione degli score del link predictor.
 
 ## Risultati
+
+La relazione completa è in [`relazione/Co_evolution_Social_Network.pdf`](relazione/Co_evolution_Social_Network.pdf).
 
 Run documentata: sottografo di 5.000 nodi, Fase 2 di 100 step (0–99), due run di Fase 3 di 30 step (100–129) partite dallo stesso checkpoint, con LLM reale (`casperhansen/llama-3-8b-instruct-awq`).
 
