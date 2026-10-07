@@ -230,7 +230,7 @@ La tabella seguente riporta il confronto quantitativo dettagliato tra le due ret
     \label{tab:validazione-strutturale}
 \end{table}
 
-Il rapporto di campionamento risulta pari al 2.1\% dei nodi originali. Dal punto di vista computazionale, il calcolo delle metriche sul grafo completo ha richiesto circa 110.4 secondi, contro appena 0.4 secondi per il sottografo, con un guadagno di efficienza di oltre due ordini di grandezza. Nel complesso, i valori di clustering e grado medio si mantengono coerenti tra le due reti (scostamenti contenuti entro il $\pm 30\%$), a conferma della bontà del campionamento; l'aumento della modularità nel sottografo ($+18.8\%$) è in parte un effetto atteso della riduzione di scala, che tende a rendere più nette le partizioni in comunità più piccole e numericamente meno frammentate.
+Il rapporto di campionamento risulta pari al 2.1\% dei nodi originali. Dal punto di vista computazionale, il calcolo delle metriche sul grafo completo ha richiesto circa 114 secondi, contro appena 0.4 secondi per il sottografo, con un guadagno di efficienza di oltre due ordini di grandezza. Nel complesso, i valori di clustering e grado medio si mantengono coerenti tra le due reti (scostamenti contenuti entro il $\pm 30\%$), a conferma della bontà del campionamento; l'aumento della modularità nel sottografo ($+18.8\%$) è in parte un effetto atteso della riduzione di scala, che tende a rendere più nette le partizioni in comunità più piccole e numericamente meno frammentate.
 
 \subsubsection{Metriche Baseline del Sottografo}
 Una volta completata l'estrazione, il modulo \texttt{metrics} calcola l'intero set di metriche baseline sul sottografo di lavoro (5000 nodi), che costituiscono il punto di riferimento (t=0) rispetto al quale verrà misurata l'evoluzione della rete nelle fasi successive.
@@ -431,22 +431,22 @@ L'esecuzione documentata usa l'LLM reale in tutte le fasi. La Fase 2 comprende 1
         \toprule
         \textbf{Step} & \textbf{S} & \textbf{I} & \textbf{R} & \textbf{ECI} & \textbf{Mod. Q} & \textbf{Op. homophily} & \textbf{Belief assort.} \\
         \midrule
-        0  & 3\,964 & 835    & 201    & 0.831 & 0.826 & 0.625 & 0.271 \\
-        25 & 1\,420 & 1\,840 & 1\,740 & 0.825 & 0.818 & 0.668 & 0.399 \\
-        49 & 1\,044 & 2\,039 & 1\,917 & 0.814 & 0.810 & 0.725 & 0.474 \\
-        75 & 930    & 2\,048 & 2\,022 & 0.806 & 0.798 & 0.745 & 0.517 \\
-        99 & 897    & 2\,045 & 2\,058 & 0.801 & 0.788 & 0.755 & 0.541 \\
+        0  & 3\,965 & 841    & 194    & 0.832 & 0.828 & 0.629 & 0.268 \\
+        25 & 1\,363 & 1\,927 & 1\,710 & 0.840 & 0.841 & 0.708 & 0.464 \\
+        49 & 1\,070 & 2\,022 & 1\,908 & 0.850 & 0.854 & 0.759 & 0.541 \\
+        75 & 990    & 2\,030 & 1\,980 & 0.861 & 0.867 & 0.797 & 0.622 \\
+        99 & 978    & 2\,032 & 1\,990 & 0.874 & 0.877 & 0.814 & 0.659 \\
         \bottomrule
     \end{tabular}
     \caption{Andamento della Fase 2 a intervalli di circa 25 step.}
     \label{tab:fase2}
 \end{table}
 
-Il grafico di sinistra mostra un tipico andamento epidemico. La popolazione Suscettibile decresce da 3\,964 a 897 unità; gli Infetti crescono rapidamente nei primi 50 step e poi si stabilizzano intorno al 41\% dei nodi (picco di 2\,056 infetti allo step 56). I Resistenti continuano a crescere più a lungo e alla fine superano gli Infetti (2\,058 contro 2\,045).
+Il grafico di sinistra mostra un tipico andamento epidemico. La popolazione Suscettibile decresce da 3\,965 a 978 unità; gli Infetti superano i Suscettibili già allo step 16, crescono rapidamente nei primi 30 step e poi si stabilizzano intorno al 41\% dei nodi (picco di 2\,034 infetti allo step 88). I Resistenti crescono con lo stesso andamento ma restano sempre leggermente sotto gli Infetti (1\,990 contro 2\,032 allo step 99).
 
-Il grafico di destra mette a confronto due letture della segregazione. Le metriche strutturali calano leggermente: la modularità passa da 0.826 a 0.788 e l'Echo Chamber Index da 0.831 a 0.801. Le metriche di opinione crescono invece in modo marcato: la belief assortativity raddoppia (da 0.27 a 0.54) e l'opinion homophily sale da 0.63 a 0.76. I nodi tendono quindi sempre più a essere connessi a chi la pensa come loro, ma le echo chamber che emergono non coincidono con le community iniziali della rete di co-autoraggio: si formano lungo le opinioni.
+Il grafico di destra mette a confronto due letture della segregazione, che in questa run crescono entrambe. Le metriche strutturali salgono in modo graduale e regolare: la modularità passa da 0.828 a 0.877 e l'Echo Chamber Index da 0.832 a 0.874. Le metriche di opinione crescono in modo molto più marcato: la belief assortativity sale da 0.27 a 0.66 (circa due volte e mezzo) e l'opinion homophily da 0.63 a 0.81, dopo un calo iniziale nei primi 4 step dovuto alla prima ondata di contagio. Il rewiring guidato dalla GNN rafforza quindi le community esistenti della rete di co-autoraggio e, in misura maggiore, raggruppa i nodi che condividono la stessa opinione.
 
-Il rewiring sostituisce complessivamente 2\,500 archi in 100 step, circa il 10\% della rete, a densità costante (26\,246 archi). Alla fine della Fase 2 la rete conta 46 componenti connesse invece di una: il vincolo di sicurezza impedisce di isolare singoli nodi, ma il rewiring può staccare piccoli gruppi dal resto della rete.
+Il rewiring sostituisce complessivamente 2\,500 archi in 100 step, circa il 10\% della rete, a densità costante (26\,246 archi). Alla fine della Fase 2 la rete conta 86 componenti connesse invece di una: il vincolo di sicurezza impedisce di isolare singoli nodi, ma il rewiring può staccare piccoli gruppi dal resto della rete.
 
 \subsection{Fase 3: Intervento e Fact-Checking}
 L'ultima fase simula una contromisura strategica contro la diffusione della narrazione polarizzante.
@@ -457,18 +457,18 @@ L'ultima fase simula una contromisura strategica contro la diffusione della narr
 
 La Fase 3 — \textit{Deployment \& Fact-Checking} — ha lo scopo di valutare l'efficacia delle strategie di contrasto alla disinformazione all'interno della rete sociale simulata. Introduce un sottoinsieme di agenti con il ruolo di Fact-Checker (stato F), con l'obiettivo di frenare l'infezione della narrazione polarizzante e spingere gli agenti infetti (I) o suscettibili (S) a diventare resistenti (R).
 
-\paragraph{Disegno sperimentale: intervento e controllo.} Un semplice confronto ``prima/dopo'' su una sola run mescolerebbe l'effetto dei fact-checker con l'evoluzione spontanea della rete, che continua a cambiare anche senza intervento. Per isolare l'effetto, la Fase 3 viene eseguita due volte a partire dallo stesso checkpoint di fine Fase 2 e per lo stesso numero di step: una run con l'iniezione dei fact-checker e una run di controllo senza (\texttt{CONTROL\_RUN = True}, oppure \texttt{phase3\_run.py --no-celf}). Grazie al seed per richiesta dell'LLM, le due run ricevono le stesse risposte finché i prompt coincidono. L'effetto dell'intervento è la differenza tra le due run allo stesso step.
+\paragraph{Disegno sperimentale: intervento e controllo.} Un semplice confronto ``prima/dopo'' su una sola run mescolerebbe l'effetto dei fact-checker con l'evoluzione spontanea della rete, che continua a cambiare anche senza intervento. Per isolare l'effetto, la Fase 3 viene eseguita due volte a partire dallo stesso checkpoint di fine Fase 2 e per lo stesso numero di step: una run con l'iniezione dei fact-checker e una run di controllo senza (\texttt{CONTROL\_RUN = True} nel notebook). Grazie al seed per richiesta dell'LLM, le due run ricevono le stesse risposte finché i prompt coincidono. L'effetto dell'intervento è la differenza tra le due run allo stesso step.
 
-\subsubsection{Il Flusso di Esecuzione in phase3\_run.py}
+\subsubsection{Il Flusso di Esecuzione della Fase 3}
 Il processo si sviluppa attraverso sette passaggi logici:
 \begin{enumerate}
-    \item \textbf{Ripristino dello stato:} lo script \texttt{phase3\_run.py} inizializza il \texttt{CheckpointManager} e l'orchestratore \texttt{SimulationOrchestrator} per ricaricare l'ultimo checkpoint salvato al termine della Fase 2 (co-evoluzione).
+    \item \textbf{Ripristino dello stato:} il notebook inizializza il \texttt{CheckpointManager} e l'orchestratore \texttt{SimulationOrchestrator} per ricaricare l'ultimo checkpoint salvato al termine della Fase 2 (co-evoluzione).
     \item \textbf{Calcolo della baseline pre-intervento:} vengono calcolate le metriche strutturali e di opinione correnti (Infection Rate, modularità Q, Echo Chamber Index, polarizzazione, omofilia e assortatività delle opinioni) per registrare lo stato della rete prima dell'iniezione.
     \item \textbf{Verifica della soglia e selezione dei seed:} l'intervento si attiva se l'infection rate supera \texttt{activation\_threshold} (0.4); il parametro \texttt{FORCE\_INJECTION} consente di iniettare comunque, registrandolo nel report. Vengono poi selezionati i $k$ nodi in cui posizionare i fact-checker. Nella run di controllo questo passaggio e il successivo vengono saltati.
     \item \textbf{Iniezione dei fact-checker:} la classe \texttt{FactCheckerInjector} converte lo stato dei nodi selezionati in F e vi inserisce un post iniziale di fact-checking per attivare la propagazione nei feed dei rispettivi vicini; lo stato degli agenti viene poi sincronizzato con il grafo (\texttt{sync\_agent\_states}).
     \item \textbf{Simulazione post-intervento:} l'orchestratore fa avanzare la simulazione per $N$ step post-intervento, ripartendo dallo step successivo all'ultimo della Fase 2. Durante questa fase gli agenti vicini ai nodi F leggono i post correttivi e, in base alle soglie e al loro livello cognitivo di suscettibilità, possono transitare in R. Gli step vengono eseguiti dalla stessa istanza dell'\texttt{SimulationOrchestrator}, con lo stesso LLM reale (server vLLM locale) impiegato nelle fasi precedenti.
     \item \textbf{Confronto delle metriche:} viene calcolato il report finale con le metriche di fine run, le metriche dei fact-checker e le variazioni rispetto alla baseline pre-intervento.
-    \item \textbf{Salvataggio del report:} tutti i dati dell'intervento (inclusi i node ID scelti e la stima dei nodi coperti) vengono scritti in \texttt{results/phase3\_report.json}, oppure in \texttt{results/phase3\_report\_control.json} per la run di controllo. Lo script \texttt{scripts/compare\_phase3.py} confronta infine le due run e salva l'effetto dell'intervento in \texttt{results/phase3\_comparison.json}.
+    \item \textbf{Salvataggio del report:} tutti i dati dell'intervento (inclusi i node ID scelti e la stima dei nodi coperti) vengono scritti in \texttt{results/phase3\_report.json}, oppure in \texttt{results/phase3\_report\_control.json} per la run di controllo. L'ultima cella del notebook (\textit{Confronto Intervento vs Controllo}) confronta infine le due run, usando solo i report con il flag \texttt{control\_run} atteso e almeno uno step di Fase 3, e salva l'effetto dell'intervento in \texttt{results/phase3\_comparison.json}.
 \end{enumerate}
 
 \subsubsection{Moduli Richiamati nella Fase 3}
@@ -499,7 +499,7 @@ La Fase 3 si appoggia sul sottosistema di mitigazione dell'influenza ideologica 
 \end{itemize}
 
 \subsubsection{Risultati: Intervento a Confronto con il Controllo}
-Entrambe le run partono dal checkpoint dello step 99 ed eseguono 30 step post-intervento (step 100--129), con \texttt{CELF\_BUDGET\_K = 20}. L'intervento è partito con un infection rate di 0.409, sopra la soglia di attivazione (0.4), quindi senza forzature. La selezione con obiettivo \texttt{threshold} ha scelto 20 nodi suscettibili, con una stima di 163 nodi coperti.
+Entrambe le run partono dal checkpoint dello step 99 ed eseguono 30 step post-intervento (step 100--129), con \texttt{CELF\_BUDGET\_K = 20}. L'intervento è partito con un infection rate di 0.406, sopra la soglia di attivazione (0.4), quindi senza forzature. La selezione con obiettivo \texttt{threshold} ha scelto 20 nodi suscettibili, con una stima di 162 nodi coperti.
 
 \begin{table}[h]
     \centering
@@ -508,16 +508,16 @@ Entrambe le run partono dal checkpoint dello step 99 ed eseguono 30 step post-in
         \toprule
         \textbf{Metrica (step 129)} & \textbf{Con fact-checker} & \textbf{Controllo} & \textbf{Effetto} \\
         \midrule
-        Nodi S               & 699    & 855    & $-156$ (di cui 20 seed divenuti F) \\
-        Nodi I               & 2\,040 & 2\,056 & $-16$ \\
-        Nodi R               & 2\,241 & 2\,089 & $+152$ \\
-        Infection Rate       & 0.408  & 0.411  & $-0.003$ \\
-        Belief Assortativity & 0.557  & 0.544  & $+0.013$ \\
-        Opinion Homophily    & 0.756  & 0.756  & $0.000$ \\
-        Belief Polarisation  & 0.858  & 0.829  & $+0.029$ \\
-        Echo Chamber Index   & 0.791  & 0.792  & $-0.001$ \\
-        Modularity Q         & 0.774  & 0.777  & $-0.004$ \\
-        Transizioni in 30 step & 191  & 59     & $+132$ \\
+        Nodi S               & 798    & 974    & $-176$ (di cui 20 seed divenuti F) \\
+        Nodi I               & 2\,020 & 2\,024 & $-4$ \\
+        Nodi R               & 2\,162 & 2\,002 & $+160$ \\
+        Infection Rate       & 0.404  & 0.405  & $-0.001$ \\
+        Belief Assortativity & 0.704  & 0.692  & $+0.012$ \\
+        Opinion Homophily    & 0.831  & 0.831  & $0.000$ \\
+        Belief Polarisation  & 0.839  & 0.805  & $+0.034$ \\
+        Echo Chamber Index   & 0.886  & 0.886  & $0.000$ \\
+        Modularity Q         & 0.883  & 0.884  & $0.000$ \\
+        Transizioni in 30 step & 177  & 17     & $+160$ \\
         \bottomrule
     \end{tabular}
     \caption{Effetto dell'intervento allo step 129: run con 20 fact-checker a confronto con la run di controllo partita dallo stesso checkpoint.}
@@ -527,7 +527,7 @@ Entrambe le run partono dal checkpoint dello step 99 ed eseguono 30 step post-in
 \begin{figure}[h]
     \centering
     \includegraphics[width=\textwidth]{fase3_confronto.png}
-    \caption{Evoluzione dei nodi Suscettibili (sinistra) e Infetti (destra) dallo step 99 allo step 129, nella run con fact-checker (linea continua) e nella run di controllo (linea tratteggiata).}
+    \caption{Evoluzione dei nodi Suscettibili (sinistra), Infetti (centro) e Resistenti (destra) dallo step 99 allo step 129, nella run con fact-checker (linea continua) e nella run di controllo (linea tratteggiata). Le scale verticali sono diverse: la variazione degli Infetti è di pochi nodi.}
     \label{fig:fase3-confronto}
 \end{figure}
 
@@ -538,27 +538,27 @@ Entrambe le run partono dal checkpoint dello step 99 ed eseguono 30 step post-in
         \toprule
         \textbf{Step} & \textbf{S (FC)} & \textbf{S (controllo)} & \textbf{I (FC)} & \textbf{I (controllo)} \\
         \midrule
-        99  & 897 & 897 & 2\,045 & 2\,045 \\
-        100 & 856 & 896 & 2\,045 & 2\,045 \\
-        105 & 782 & 891 & 2\,044 & 2\,045 \\
-        110 & 746 & 883 & 2\,043 & 2\,045 \\
-        119 & 718 & 875 & 2\,041 & 2\,048 \\
-        129 & 699 & 855 & 2\,040 & 2\,056 \\
+        99  & 978 & 978 & 2\,032 & 2\,032 \\
+        100 & 936 & 977 & 2\,032 & 2\,032 \\
+        105 & 855 & 976 & 2\,031 & 2\,030 \\
+        110 & 826 & 976 & 2\,029 & 2\,028 \\
+        120 & 807 & 975 & 2\,024 & 2\,025 \\
+        129 & 798 & 974 & 2\,020 & 2\,024 \\
         \bottomrule
     \end{tabular}
     \caption{Andamento di Suscettibili e Infetti nelle due run (FC = run con fact-checker).}
     \label{tab:fase3-andamento}
 \end{table}
 
-Alla fine della run, i 20 fact-checker raggiungono direttamente 256 nodi (12.8 per fact-checker in media), mentre i nodi su cui la loro pressione supera ancora le soglie di transizione sono soltanto 9 (copertura efficace dello 0.18\%): gran parte dei vicini raggiungibili è già stata convertita nei primi step.
+Alla fine della run, i 20 fact-checker raggiungono direttamente 194 nodi (9.7 per fact-checker in media), mentre i nodi su cui la loro pressione supera ancora le soglie di transizione sono soltanto 5 (copertura efficace dello 0.10\%): gran parte dei vicini raggiungibili è già stata convertita nei primi step.
 
 \subsubsection{Conclusioni sull'Efficacia dell'Intervento}
 Il confronto con il controllo restituisce un quadro netto su un fronte e più sfumato sugli altri.
 
 \begin{itemize}[leftmargin=*]
-    \item \textbf{Protezione dei suscettibili:} è l'effetto principale. I fact-checker convertono in resistenti 136 suscettibili in più rispetto al controllo (156 meno i 20 seed), quasi tutti nei primi 10 step: circa 20 per step all'inizio, 2--3 alla fine. La stima della selezione (163 nodi coperti) era quindi nell'ordine di grandezza corretto.
-    \item \textbf{Infetti:} l'effetto diretto è quasi nullo, perché un infetto si converte solo se almeno un quarto dei suoi vicini è fact-checker. Emerge però un effetto indiretto che cresce nel tempo: nel controllo gli infetti continuano a salire (da 2\,045 a 2\,056), mentre con i fact-checker scendono leggermente (a 2\,040). I suscettibili protetti non sono più contagiabili, quindi la differenza aumenta step dopo step (da 0 a $-16$).
-    \item \textbf{Echo chamber:} l'intervento non le riduce e anzi aumenta leggermente la belief assortativity ($+0.013$). I nodi protetti diventano resistenti accanto ad altri resistenti, rafforzando i gruppi di opinione esistenti. Anche la polarizzazione cresce ($+0.029$), perché nodi neutrali (S) passano a una posizione netta (R).
+    \item \textbf{Protezione dei suscettibili:} è l'effetto principale. I fact-checker convertono in resistenti 156 suscettibili in più rispetto al controllo (176 meno i 20 seed), quasi tutti nei primi 10 step: 135 delle 177 transizioni avvengono negli step 100--109, con 14--23 transizioni per step all'inizio e 0--4 alla fine. La stima della selezione (162 nodi coperti) coincide quasi esattamente con i resistenti in più rispetto al controllo ($+160$).
+    \item \textbf{Infetti:} l'effetto è trascurabile, perché un infetto si converte solo se almeno un quarto dei suoi vicini è fact-checker. Gli infetti calano di poco in entrambe le run (da 2\,032 a 2\,020 con i fact-checker, a 2\,024 nel controllo): la differenza finale di $-4$ nodi si forma solo negli ultimi 15 step e non è distinguibile dalla variabilità della singola run.
+    \item \textbf{Echo chamber:} l'intervento non le riduce e anzi aumenta leggermente la belief assortativity ($+0.012$). I nodi protetti diventano resistenti accanto ad altri resistenti, rafforzando i gruppi di opinione esistenti. Anche la polarizzazione cresce ($+0.034$), perché nodi neutrali (S) passano a una posizione netta (R).
     \item \textbf{Struttura:} Echo Chamber Index e modularità sono praticamente uguali nelle due run. L'intervento agisce sulle opinioni, non sulla topologia della rete.
     \item \textbf{Sproporzione tra budget e scala della rete:} 20 fact-checker rappresentano lo 0.4\% della popolazione, introdotti quando gli infetti sono già oltre 2\,000 e la loro crescita si è stabilizzata. Con le regole del modello, un budget così ridotto e tardivo può proteggere chi non è ancora stato contagiato, ma non recuperare una popolazione infetta già consolidata.
 \end{itemize}
@@ -576,19 +576,19 @@ A completamento dell'analisi quantitativa, è utile osservare direttamente l'evo
 \begin{figure}[h]
     \centering
     \includegraphics[width=\textwidth]{rete_iniziale_finale.png}
-    \caption{Confronto tra la topologia della rete allo step iniziale (sinistra, 150 nodi campionati sugli hub, 1\,345 archi) e allo step 129 (destra, stesso campione, 1\,329 archi), al termine della co-evoluzione. L'immagine si riferisce alla run di controllo; la topologia della run con intervento è praticamente identica, come confermano ECI e modularità.}
+    \caption{Confronto tra la topologia della rete allo step iniziale (sinistra, 150 nodi campionati sugli hub, 1\,345 archi) e allo step 129 (destra, stesso campione, 1\,588 archi), al termine della co-evoluzione. L'immagine si riferisce alla run di controllo; la topologia della run con intervento è praticamente identica, come confermano ECI e modularità.}
     \label{fig:rete-iniziale-finale}
 \end{figure}
 
 Il confronto visivo conferma quanto osservato nelle metriche aggregate delle Fasi 2 e 3. Nella rete iniziale (sinistra) il campione si presenta come un insieme di piccoli cluster densi e ben separati tra loro, con pochissimi legami di lungo raggio: la struttura a compartimenti stagni tipica di una rete di co-autoraggio accademico organizzata per sotto-discipline. Nella rete finale (destra), a parità di nodi, emergono alcuni elementi distintivi:
 
 \begin{itemize}[leftmargin=*]
-    \item \textbf{Ridistribuzione degli archi a densità costante:} il numero di archi del campione resta quasi invariato (da 1\,345 a 1\,329, $-1.2\%$), coerentemente con il rewiring di tipo \texttt{swap}, che sostituisce archi senza aggiungerne. Il cambiamento non è quindi nella quantità dei legami, ma in quali coppie di nodi collegano.
-    \item \textbf{Nuovi legami tra cluster vicini:} nel gruppo in alto a sinistra compaiono collegamenti che uniscono sotto-gruppi prima connessi in modo più lasco. È l'effetto del rewiring guidato dalla GNN: nuovi archi nascono tra agenti che hanno sviluppato posizioni simili nello spazio degli embedding, mentre si perdono gli archi con lo score più basso.
-    \item \textbf{Stabilità del nucleo centrale e della periferia:} il cluster principale e i nodi periferici a basso grado (coppie isolate o singoli nodi) restano sostanzialmente invariati. Sui 150 hub osservati, il rewiring agisce in modo selettivo e non stravolge la struttura locale.
+    \item \textbf{Concentrazione degli archi sugli hub:} la rete nel suo complesso mantiene la stessa densità (26\,246 archi), ma il campione di hub guadagna archi (da 1\,345 a 1\,588, $+18\%$). Il rewiring sostituisce archi senza aggiungerne: quelli nuovi tendono a collegare nodi centrali, mentre quelli rimossi stanno altrove nella rete.
+    \item \textbf{Cluster più compatti:} i nuovi archi si concentrano all'interno dei cluster già esistenti, che risultano più densi, invece di creare ponti tra gruppi diversi. È l'effetto del rewiring guidato dalla GNN: nuovi archi nascono tra agenti che hanno sviluppato posizioni simili nello spazio degli embedding, ed è coerente con la crescita di modularità ed Echo Chamber Index.
+    \item \textbf{Stabilità della periferia:} i nodi periferici a basso grado (coppie isolate o singoli nodi) restano sostanzialmente invariati. Sui 150 hub osservati, il rewiring non stravolge la disposizione dei gruppi, ma ne aumenta la coesione interna.
 \end{itemize}
 
-Questo pattern visivo è coerente con il quadro emerso dalle metriche numeriche: il rewiring della GNN non stravolge la topologia della rete, ma la ``rifinisce'' selettivamente, sostituendo circa il 10\% degli archi in 100 step e riorganizzando i legami lungo le opinioni piuttosto che lungo le community originarie. L'intervento di fact-checking, nella finestra osservata, agisce invece sul livello cognitivo (stati e opinioni) e non sulla struttura fisica del grafo.
+Questo pattern visivo è coerente con il quadro emerso dalle metriche numeriche: il rewiring della GNN non stravolge la topologia della rete, ma la ``rifinisce'' selettivamente, sostituendo circa il 10\% degli archi in 100 step e rendendo più coesi sia le community originarie sia, in misura maggiore, i gruppi di opinione. L'intervento di fact-checking, nella finestra osservata, agisce invece sul livello cognitivo (stati e opinioni) e non sulla struttura fisica del grafo.
 
 \subsection{Conclusioni Generali}
 La pipeline implementata in \texttt{progettoASM} rappresenta un solido paradigma di simulazione sociale in cui l'intelligenza artificiale generativa smette di essere un semplice strumento di supporto e diviene il motore stesso dell'evoluzione di rete.
@@ -597,13 +597,13 @@ L'architettura, attraverso la successione ordinata delle fasi, mostra come la co
 
 I risultati principali si possono riassumere in quattro punti:
 \begin{enumerate}
-    \item Gli agenti LLM producono una dinamica di diffusione realistica: crescita rapida, saturazione intorno al 41\% dei nodi e comparsa spontanea di resistenti, che alla fine superano gli infetti.
-    \item La co-evoluzione genera echo chamber di \textbf{opinione} (belief assortativity da 0.27 a 0.54), mentre la struttura per community si indebolisce. Misurate solo con l'Echo Chamber Index strutturale, le echo chamber sarebbero sembrate in diminuzione: è necessario affiancare metriche basate sulle opinioni.
-    \item Un intervento tardivo con 20 fact-checker (0.4\% dei nodi) protegge una parte consistente dei suscettibili, ma lascia quasi invariata la popolazione infetta già consolidata. Con le regole del modello, il fact-checking funziona come prevenzione più che come cura.
+    \item Gli agenti LLM producono una dinamica di diffusione realistica: crescita rapida, saturazione intorno al 41\% dei nodi e comparsa spontanea di resistenti, che arrivano quasi a pareggiare gli infetti.
+    \item La co-evoluzione rafforza le echo chamber, soprattutto quelle di \textbf{opinione}: la belief assortativity sale da 0.27 a 0.66, mentre l'Echo Chamber Index strutturale cresce in misura molto minore (da 0.83 a 0.87). L'indice strutturale da solo sottostimerebbe la segregazione: è necessario affiancare metriche basate sulle opinioni.
+    \item Un intervento tardivo con 20 fact-checker (0.4\% dei nodi) protegge circa 160 suscettibili (il 16\% di quelli rimasti), in linea con la stima della selezione, ma lascia invariata la popolazione infetta già consolidata. Con le regole del modello, il fact-checking funziona come prevenzione più che come cura.
     \item L'intervento non riduce la polarizzazione: la rafforza leggermente, perché sposta nodi neutrali su posizioni nette.
 \end{enumerate}
 
-\paragraph{Limitazioni.} Ogni configurazione è stata eseguita una sola volta: con un costo di circa 6 minuti per step non è stato possibile ripetere le run con seed diversi, e gli effetti più piccoli richiederebbero repliche per essere confermati. Il seed per richiesta rende ripetibili le risposte a parità di prompt, ma vLLM non garantisce il determinismo completo con batching variabile. L'obiettivo di selezione dei seed considera l'effetto immediato dei fact-checker sui vicini, non la dinamica futura (ricadute, rewiring, risposte dell'LLM). Infine, il rewiring a densità costante ha staccato dalla rete 45 piccoli gruppi di nodi: un vincolo di connettività sulle rimozioni renderebbe la rete più realistica.
+\paragraph{Limitazioni.} Ogni configurazione è stata eseguita una sola volta: con un costo di circa 6 minuti per step non è stato possibile ripetere le run con seed diversi, e gli effetti più piccoli richiederebbero repliche per essere confermati. Il seed per richiesta rende ripetibili le risposte a parità di prompt, ma vLLM non garantisce il determinismo completo con batching variabile. L'obiettivo di selezione dei seed considera l'effetto immediato dei fact-checker sui vicini, non la dinamica futura (ricadute, rewiring, risposte dell'LLM). Infine, il rewiring a densità costante ha staccato dalla rete 85 piccoli gruppi di nodi in 100 step (153 allo step 129): un vincolo di connettività sulle rimozioni renderebbe la rete più realistica.
 
 I risultati ottenuti, archiviati in \texttt{metrics\_history.csv}, \texttt{metrics\_history\_control.csv} e nei report della Fase 3, costituiscono la base per ulteriori indagini scientifiche. In futuro, il sistema potrà essere esteso integrando algoritmi di \textit{GNN Explainer} per interpretare visivamente quali legami stiano effettivamente guidando la polarizzazione, testando diverse architetture di agenti LLM per osservare se differenti ``personalità'' algoritmiche conducano a velocità di convergenza verso l'omofilia sensibilmente diverse, o esplorando budget di fact-checker più ampi e finestre di attivazione più precoci, prima che il contagio si stabilizzi, per verificare a quali condizioni l'intervento riesca a ridurre anche la popolazione infetta.
 
@@ -617,12 +617,12 @@ Al termine di ciascuna run, la pipeline stampa un riepilogo consuntivo che racco
     Archi            & 26\,246 & 26\,246 \\
     Community        & 415 (Q baseline $= 0.8265$) & 415 (Q baseline $= 0.8265$) \\
     Step Fase 2      & 100 & 100 \\
-    Infection rate   & $0.4090 \rightarrow 0.4080$ & $0.4090 \rightarrow 0.4112$ \\
-    ECI              & $0.8009 \rightarrow 0.7908$ & $0.8009 \rightarrow 0.7923$ \\
+    Infection rate   & $0.4064 \rightarrow 0.4040$ & $0.4064 \rightarrow 0.4048$ \\
+    ECI              & $0.8741 \rightarrow 0.8855$ & $0.8741 \rightarrow 0.8858$ \\
     Seed fact-checker & 20 nodi & 0 nodi \\
-    Copertura efficace & 0.0018 & 0.0000 \\
+    Copertura efficace & 0.0010 & 0.0000 \\
 \end{tabular}
 \end{tcolorbox}
 
-Il riepilogo conferma, in forma aggregata, il quadro delineato nelle sezioni precedenti: la rete parte da una condizione di forte segregazione comunitaria (415 community, $Q=0.8265$); nei 30 step finali l'infection rate cresce leggermente nel controllo e scende leggermente con i fact-checker, mentre l'ECI cala in modo quasi identico nelle due run, a riprova che l'intervento incide sulla dimensione cognitiva e non su quella strutturale della rete.
+Il riepilogo conferma, in forma aggregata, il quadro delineato nelle sezioni precedenti: la rete parte da una condizione di forte segregazione comunitaria (415 community, $Q=0.8265$); nei 30 step finali l'infection rate scende di pochi millesimi in entrambe le run, mentre l'ECI cresce in modo quasi identico nelle due run, a riprova che l'intervento incide sulla dimensione cognitiva e non su quella strutturale della rete.
 \end{document}

@@ -202,13 +202,50 @@ CELF sceglie `CELF_BUDGET_K` nodi suscettibili e li converte in fact-checker (st
 
 ## Risultati
 
-*In attesa della run.* Al termine delle quattro sessioni saranno disponibili:
+Run documentata: sottografo di 5.000 nodi, Fase 2 di 100 step (0–99), due run di Fase 3 di 30 step (100–129) partite dallo stesso checkpoint, con LLM reale (`casperhansen/llama-3-8b-instruct-awq`).
+
+### Fase 2 — Co-evoluzione
+
+| Step | S | I | R | ECI | Modularity Q | Opinion homophily | Belief assortativity |
+|---|---|---|---|---|---|---|---|
+| 0 | 3965 | 841 | 194 | 0.832 | 0.828 | 0.629 | 0.268 |
+| 49 | 1070 | 2022 | 1908 | 0.850 | 0.854 | 0.759 | 0.541 |
+| 99 | 978 | 2032 | 1990 | 0.874 | 0.877 | 0.814 | 0.659 |
+
+- Il contagio satura intorno al 41% dei nodi (picco di 2034 infetti allo step 88); i resistenti crescono con lo stesso andamento e restano poco sotto gli infetti.
+- La segregazione cresce su entrambi i fronti, ma molto più sulle opinioni (belief assortativity da 0.27 a 0.66) che sulla struttura (ECI da 0.83 a 0.87).
+- Il rewiring sostituisce 2500 archi (circa il 10% della rete) a densità costante; a fine Fase 2 la rete ha 86 componenti connesse.
+
+### Fase 3 — Intervento vs controllo (step 129)
+
+CELF (obiettivo `threshold`, `CELF_BUDGET_K=20`) ha scelto 20 suscettibili con una stima di 162 nodi coperti. L'infection rate di partenza (0.406) superava la soglia di attivazione, quindi l'iniezione non è stata forzata.
+
+| Metrica | Con fact-checker | Controllo | Effetto |
+|---|---|---|---|
+| Nodi S | 798 | 974 | −176 (di cui 20 seed divenuti F) |
+| Nodi I | 2020 | 2024 | −4 |
+| Nodi R | 2162 | 2002 | +160 |
+| Infection rate | 0.4040 | 0.4048 | −0.0008 |
+| Echo Chamber Index | 0.8855 | 0.8858 | −0.0003 |
+| Modularity Q | 0.8831 | 0.8835 | −0.0004 |
+| Opinion homophily | 0.8305 | 0.8306 | −0.0001 |
+| Belief assortativity | 0.7042 | 0.6922 | +0.0119 |
+| Belief polarisation | 0.8394 | 0.8052 | +0.0342 |
+| Transizioni in 30 step | 177 | 17 | +160 |
+
+- **Protezione dei suscettibili**: circa 156 suscettibili in più diventano resistenti, in linea con la stima di CELF. L'effetto si esaurisce presto: 135 delle 177 transizioni avvengono nei primi 10 step e a fine run la copertura efficace è di 5 nodi.
+- **Infetti**: effetto trascurabile (−4 nodi). Un infetto si converte solo se almeno il 25% dei vicini è fact-checker, condizione che 20 seed su 5000 nodi non raggiungono quasi mai.
+- **Echo chamber e struttura**: ECI, modularità e homophily sono uguali nelle due run; l'intervento agisce sugli stati, non sulla topologia. Assortativity e polarizzazione crescono leggermente perché nodi neutrali (S) passano a una posizione netta (R).
+
+### File
+
 
 | File | Contenuto |
 |---|---|
 | `results/metrics_history.csv` | Metriche per step: Fase 2 + Fase 3 con fact-checker |
 | `results/phase3_report.json` | Report finale della run con fact-checker (seed CELF, reach, copertura, delta) |
 | `results/phase3_report_control.json` | Report finale della run di controllo |
+| `results/metrics_history_control.csv` | Metriche per step: Fase 2 + Fase 3 di controllo |
 | `results/pipeline_summary*.json` | Riepilogo della pipeline |
 | `results/phase3_comparison.json` | Effetto dell'intervento (intervento − controllo), finale e per step |
 | `results/figures/` | Validazione del sottografo, evoluzione di Fase 2, confronto di Fase 3, rete iniziale e finale |
