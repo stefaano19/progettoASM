@@ -1,0 +1,390 @@
+{
+  "finale": {
+    "infection_rate": {
+      "intervento": 0.404,
+      "controllo": 0.4048,
+      "effetto": -0.0007999999999999674
+    },
+    "n_S": {
+      "intervento": 798,
+      "controllo": 974,
+      "effetto": -176
+    },
+    "n_I": {
+      "intervento": 2020,
+      "controllo": 2024,
+      "effetto": -4
+    },
+    "n_R": {
+      "intervento": 2162,
+      "controllo": 2002,
+      "effetto": 160
+    },
+    "n_F": {
+      "intervento": 20,
+      "controllo": 0,
+      "effetto": 20
+    },
+    "echo_chamber_index": {
+      "intervento": 0.8855057524536111,
+      "controllo": 0.885811069509648,
+      "effetto": -0.00030531705603698
+    },
+    "modularity_q": {
+      "intervento": 0.8831072854787978,
+      "controllo": 0.8835467242453973,
+      "effetto": -0.0004394387665994648
+    },
+    "belief_polarisation": {
+      "intervento": 0.8393502400000001,
+      "controllo": 0.80518064,
+      "effetto": 0.03416960000000013
+    },
+    "opinion_homophily": {
+      "intervento": 0.8305265564276462,
+      "controllo": 0.8306027585155833,
+      "effetto": -7.620208793712724e-05
+    },
+    "belief_assortativity": {
+      "intervento": 0.7041592337547496,
+      "controllo": 0.6922165984208687,
+      "effetto": 0.011942635333880958
+    }
+  },
+  "per_step": [
+    {
+      "step": 100,
+      "S_intervento": 936,
+      "S_controllo": 977,
+      "I_intervento": 2032,
+      "I_controllo": 2032,
+      "R_intervento": 2012,
+      "R_controllo": 1991,
+      "transizioni_intervento": 22,
+      "transizioni_controllo": 1
+    },
+    {
+      "step": 101,
+      "S_intervento": 914,
+      "S_controllo": 977,
+      "I_intervento": 2031,
+      "I_controllo": 2031,
+      "R_intervento": 2035,
+      "R_controllo": 1992,
+      "transizioni_intervento": 23,
+      "transizioni_controllo": 1
+    },
+    {
+      "step": 102,
+      "S_intervento": 900,
+      "S_controllo": 977,
+      "I_intervento": 2031,
+      "I_controllo": 2031,
+      "R_intervento": 2049,
+      "R_controllo": 1992,
+      "transizioni_intervento": 14,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 103,
+      "S_intervento": 879,
+      "S_controllo": 976,
+      "I_intervento": 2030,
+      "I_controllo": 2029,
+      "R_intervento": 2071,
+      "R_controllo": 1995,
+      "transizioni_intervento": 22,
+      "transizioni_controllo": 3
+    },
+    {
+      "step": 104,
+      "S_intervento": 868,
+      "S_controllo": 976,
+      "I_intervento": 2030,
+      "I_controllo": 2029,
+      "R_intervento": 2082,
+      "R_controllo": 1995,
+      "transizioni_intervento": 11,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 105,
+      "S_intervento": 855,
+      "S_controllo": 976,
+      "I_intervento": 2031,
+      "I_controllo": 2030,
+      "R_intervento": 2094,
+      "R_controllo": 1994,
+      "transizioni_intervento": 14,
+      "transizioni_controllo": 1
+    },
+    {
+      "step": 106,
+      "S_intervento": 847,
+      "S_controllo": 976,
+      "I_intervento": 2031,
+      "I_controllo": 2028,
+      "R_intervento": 2102,
+      "R_controllo": 1996,
+      "transizioni_intervento": 8,
+      "transizioni_controllo": 4
+    },
+    {
+      "step": 107,
+      "S_intervento": 843,
+      "S_controllo": 976,
+      "I_intervento": 2030,
+      "I_controllo": 2028,
+      "R_intervento": 2107,
+      "R_controllo": 1996,
+      "transizioni_intervento": 5,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 108,
+      "S_intervento": 837,
+      "S_controllo": 976,
+      "I_intervento": 2029,
+      "I_controllo": 2028,
+      "R_intervento": 2114,
+      "R_controllo": 1996,
+      "transizioni_intervento": 7,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 109,
+      "S_intervento": 830,
+      "S_controllo": 976,
+      "I_intervento": 2029,
+      "I_controllo": 2028,
+      "R_intervento": 2121,
+      "R_controllo": 1996,
+      "transizioni_intervento": 9,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 110,
+      "S_intervento": 826,
+      "S_controllo": 976,
+      "I_intervento": 2029,
+      "I_controllo": 2028,
+      "R_intervento": 2125,
+      "R_controllo": 1996,
+      "transizioni_intervento": 4,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 111,
+      "S_intervento": 823,
+      "S_controllo": 976,
+      "I_intervento": 2028,
+      "I_controllo": 2028,
+      "R_intervento": 2129,
+      "R_controllo": 1996,
+      "transizioni_intervento": 4,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 112,
+      "S_intervento": 821,
+      "S_controllo": 976,
+      "I_intervento": 2028,
+      "I_controllo": 2028,
+      "R_intervento": 2131,
+      "R_controllo": 1996,
+      "transizioni_intervento": 2,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 113,
+      "S_intervento": 820,
+      "S_controllo": 976,
+      "I_intervento": 2027,
+      "I_controllo": 2027,
+      "R_intervento": 2133,
+      "R_controllo": 1997,
+      "transizioni_intervento": 2,
+      "transizioni_controllo": 1
+    },
+    {
+      "step": 114,
+      "S_intervento": 816,
+      "S_controllo": 976,
+      "I_intervento": 2026,
+      "I_controllo": 2027,
+      "R_intervento": 2138,
+      "R_controllo": 1997,
+      "transizioni_intervento": 5,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 115,
+      "S_intervento": 814,
+      "S_controllo": 975,
+      "I_intervento": 2026,
+      "I_controllo": 2026,
+      "R_intervento": 2140,
+      "R_controllo": 1999,
+      "transizioni_intervento": 3,
+      "transizioni_controllo": 2
+    },
+    {
+      "step": 116,
+      "S_intervento": 812,
+      "S_controllo": 975,
+      "I_intervento": 2025,
+      "I_controllo": 2026,
+      "R_intervento": 2143,
+      "R_controllo": 1999,
+      "transizioni_intervento": 3,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 117,
+      "S_intervento": 810,
+      "S_controllo": 975,
+      "I_intervento": 2024,
+      "I_controllo": 2025,
+      "R_intervento": 2146,
+      "R_controllo": 2000,
+      "transizioni_intervento": 3,
+      "transizioni_controllo": 1
+    },
+    {
+      "step": 118,
+      "S_intervento": 810,
+      "S_controllo": 975,
+      "I_intervento": 2024,
+      "I_controllo": 2025,
+      "R_intervento": 2146,
+      "R_controllo": 2000,
+      "transizioni_intervento": 0,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 119,
+      "S_intervento": 808,
+      "S_controllo": 975,
+      "I_intervento": 2024,
+      "I_controllo": 2025,
+      "R_intervento": 2148,
+      "R_controllo": 2000,
+      "transizioni_intervento": 2,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 120,
+      "S_intervento": 807,
+      "S_controllo": 975,
+      "I_intervento": 2024,
+      "I_controllo": 2025,
+      "R_intervento": 2149,
+      "R_controllo": 2000,
+      "transizioni_intervento": 1,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 121,
+      "S_intervento": 805,
+      "S_controllo": 975,
+      "I_intervento": 2023,
+      "I_controllo": 2024,
+      "R_intervento": 2152,
+      "R_controllo": 2001,
+      "transizioni_intervento": 3,
+      "transizioni_controllo": 1
+    },
+    {
+      "step": 122,
+      "S_intervento": 804,
+      "S_controllo": 975,
+      "I_intervento": 2023,
+      "I_controllo": 2024,
+      "R_intervento": 2153,
+      "R_controllo": 2001,
+      "transizioni_intervento": 1,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 123,
+      "S_intervento": 804,
+      "S_controllo": 975,
+      "I_intervento": 2021,
+      "I_controllo": 2024,
+      "R_intervento": 2155,
+      "R_controllo": 2001,
+      "transizioni_intervento": 2,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 124,
+      "S_intervento": 803,
+      "S_controllo": 975,
+      "I_intervento": 2021,
+      "I_controllo": 2024,
+      "R_intervento": 2156,
+      "R_controllo": 2001,
+      "transizioni_intervento": 1,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 125,
+      "S_intervento": 803,
+      "S_controllo": 975,
+      "I_intervento": 2021,
+      "I_controllo": 2023,
+      "R_intervento": 2156,
+      "R_controllo": 2002,
+      "transizioni_intervento": 0,
+      "transizioni_controllo": 1
+    },
+    {
+      "step": 126,
+      "S_intervento": 803,
+      "S_controllo": 974,
+      "I_intervento": 2021,
+      "I_controllo": 2024,
+      "R_intervento": 2156,
+      "R_controllo": 2002,
+      "transizioni_intervento": 0,
+      "transizioni_controllo": 1
+    },
+    {
+      "step": 127,
+      "S_intervento": 800,
+      "S_controllo": 974,
+      "I_intervento": 2020,
+      "I_controllo": 2024,
+      "R_intervento": 2160,
+      "R_controllo": 2002,
+      "transizioni_intervento": 4,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 128,
+      "S_intervento": 799,
+      "S_controllo": 974,
+      "I_intervento": 2020,
+      "I_controllo": 2024,
+      "R_intervento": 2161,
+      "R_controllo": 2002,
+      "transizioni_intervento": 1,
+      "transizioni_controllo": 0
+    },
+    {
+      "step": 129,
+      "S_intervento": 798,
+      "S_controllo": 974,
+      "I_intervento": 2020,
+      "I_controllo": 2024,
+      "R_intervento": 2162,
+      "R_controllo": 2002,
+      "transizioni_intervento": 1,
+      "transizioni_controllo": 0
+    }
+  ],
+  "transizioni_totali": {
+    "intervento": 177,
+    "controllo": 17
+  }
+}
