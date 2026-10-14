@@ -1,38 +1,24 @@
 """
-src/gnn/rewirer.py
-==================
 Rewiring topologico basato sugli score del link predictor GNN.
 
-Logica di rewiring
-------------------
+Logica di rewiring:
 Per ogni step temporale t, dopo il forward pass della GNN:
 
   RIMOZIONE:
     Per ogni arco (u, v) esistente:
-      se score(u, v) < threshold_remove → rimuovi l'arco
+      se score(u, v) < threshold_remove -> rimuovi l'arco
     Massimo `max_removals_per_step` rimozioni per step.
 
   AGGIUNTA:
     Per ogni coppia candidata (u, v) non connessa:
-      se score(u, v) > threshold_add → aggiungi l'arco
+      se score(u, v) > threshold_add -> aggiungi l'arco
     Massimo `max_new_edges_per_step` aggiunte per step.
 
   FILTRI DI SICUREZZA:
     - Nessun self-loop.
-    - Non rimuovere archi verso fact-checker (stato F) — proteggono la diffusione.
+    - Non rimuovere archi verso fact-checker (stato F) - proteggono la diffusione.
     - Non aggiungere archi a nodi isolati (grado < min_degree).
     - Budget: le modifiche totali sono limitate per evitare frammentazione.
-
-Utilizzo
---------
-    from src.gnn.rewirer import Rewirer
-    rewirer = Rewirer(cfg)
-    to_add, to_remove = rewirer.compute(
-        link_scores=scores,
-        G=G,
-        agent_states=nm.get_all_states(),
-    )
-    added, removed = nm.apply_rewiring(to_add, to_remove)
 """
 
 from __future__ import annotations
@@ -50,15 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 class Rewirer:
-    """
-    Calcola le modifiche topologiche da applicare al grafo.
-
-    Parameters
-    ----------
-    cfg : Config
-        Configurazione (rewire_threshold_add, rewire_threshold_remove,
-        max_new_edges_per_step).
-    """
+    """Calcola le modifiche topologiche da applicare al grafo."""
 
     def __init__(self, cfg: "Config") -> None:
         self._cfg = cfg
@@ -73,39 +51,17 @@ class Rewirer:
             else max(1, cfg.gnn.max_new_edges_per_step // 2)
         )
 
-    # ------------------------------------------------------------------
-    # Main entry point
-    # ------------------------------------------------------------------
-
     def compute(
         self,
         link_scores: dict[tuple[int, int], float],
         G: "nx.Graph",
         agent_states: dict[int, str] | None = None,
     ) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
-        """
-        Calcola gli archi da aggiungere e da rimuovere.
-
-        Parameters
-        ----------
-        link_scores : dict[(u, v), score]
-            Score in [0, 1] per coppie di nodi (esistenti + candidati).
-        G : nx.Graph
-            Grafo corrente.
-        agent_states : dict[int, str] | None
-            Stati degli agenti — usati per filtri di sicurezza.
-
-        Returns
-        -------
-        to_add : list[(u, v)]
-            Coppie da connettere.
-        to_remove : list[(u, v)]
-            Archi da eliminare.
-        """
+        """Calcola gli archi da aggiungere e da rimuovere."""
         existing_edges = set(G.edges())
         states = agent_states or {}
 
-        # --- Archi da aggiungere ---
+        # Archi da aggiungere
         addition_candidates = [
             (pair, score) for pair, score in link_scores.items()
             if pair not in existing_edges
@@ -122,7 +78,7 @@ class Rewirer:
                 continue
             to_add.append((u, v))
 
-        # --- Archi da rimuovere ---
+        # Archi da rimuovere
         # Modalita' "threshold": rimuove solo archi con score < soglia (in
         #   pratica mai: il link predictor e' addestrato sugli archi esistenti
         #   e assegna loro score alti).
@@ -171,10 +127,6 @@ class Rewirer:
 
         return to_add, to_remove
 
-    # ------------------------------------------------------------------
-    # Safety filters
-    # ------------------------------------------------------------------
-
     def _is_safe_removal(
         self,
         u: int,
@@ -201,10 +153,6 @@ class Rewirer:
     ) -> bool:
         """Non aggiungere self-loop."""
         return u != v
-
-    # ------------------------------------------------------------------
-    # Analysis utilities
-    # ------------------------------------------------------------------
 
     def score_statistics(
         self,

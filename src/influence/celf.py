@@ -1,25 +1,12 @@
 """
-src/influence/celf.py
-=====================
-CELF (Cost-Effective Lazy Forward) for Influence Maximization.
+CELF (Cost-Effective Lazy Forward) per Influence Maximization.
 
-Algorithm
----------
-CELF is an optimization of the greedy algorithm for Influence Maximization
-that exploits the submodularity property of the spread function to reduce the
-number of costly Monte Carlo simulations.
+CELF sfrutta la submodularita' della funzione di spread: tiene una coda di
+priorita' con i guadagni marginali (upper bound) e rivaluta un candidato
+solo quando arriva in cima, riducendo le simulazioni Monte Carlo rispetto
+al greedy puro.
 
-Instead of re-evaluating the marginal gain of every candidate at each iteration,
-CELF maintains a priority queue sorted by the upper bound of marginal gains
-and re-evaluates only when necessary (lazy evaluation).
-
-Complexity:
-    Average case: O(k * R * (n + m)) vs. O(k * n * R * (n + m)) of the pure greedy algorithm,
-    where k is the budget size, R is the number of Monte Carlo rounds, n is the number of nodes,
-    and m is the number of edges.
-
-Objective (cfg.influence.celf_objective)
-----------------------------------------
+Funzione obiettivo (cfg.influence.celf_objective):
 "threshold" (default)
     Funzione obiettivo allineata alla StateMachine della simulazione: conta i
     nodi su cui la pressione dei fact-checker supera le soglie che producono
@@ -54,14 +41,7 @@ logger = logging.getLogger(__name__)
 
 
 class CELF:
-    """
-    Cost-Effective Lazy Forward solver for Influence Maximization.
-
-    Parameters
-    ----------
-    cfg : Config
-        Global configuration (uses cfg.influence.* and cfg.execution.random_seed).
-    """
+    """Cost-Effective Lazy Forward solver for Influence Maximization."""
 
     def __init__(self, cfg: "Config") -> None:
         self._cfg = cfg
@@ -85,22 +65,6 @@ class CELF:
 
         Automatically excludes nodes that are already infected ('I') or are
         already fact-checkers as seed candidates.
-
-        Parameters
-        ----------
-        graph : nx.Graph
-            The current network graph.
-        budget_k : int | None
-            Number of seed nodes to select. Defaults to cfg.influence.budget_k.
-        agent_states : dict[int, str] | None
-            Current states of the agents {node_id: "S"|"I"|"R"|"F"}.
-        seed_state : str
-            State to assign to the selected seeds (default "F" = Fact-Checker).
-
-        Returns
-        -------
-        list[int]
-            List of budget_k node IDs selected as seeds.
         """
         target_seed_count = budget_k if budget_k is not None else self._cfg.influence.budget_k
         current_states = agent_states or {}
@@ -127,7 +91,7 @@ class CELF:
         )
 
         selected_seeds: list[int] = []
-        
+
         # Max-heap simulated via min-heap with negated values: (-marginal_gain, last_updated_iteration, node_id)
         marginal_gain_heap: list[tuple[float, int, int]] = []
 
@@ -144,11 +108,11 @@ class CELF:
 
         # Compute initial marginal gain for all candidate nodes in parallel
         logger.info("[CELF] Computing initial spread for all candidates via ProcessPoolExecutor...")
-        
+
         num_cores = max(1, mp.cpu_count() - 1)
         chunk_size = max(1, len(candidates) // num_cores) if candidates else 1
         candidate_chunks = [candidates[i:i + chunk_size] for i in range(0, len(candidates), chunk_size)]
-        
+
         # Use ProcessPoolExecutor to bypass Python's GIL since IC propagation simulation is CPU-bound.
         # Use 'spawn' start method to prevent potential CUDA context initialization issues on Kaggle GPUs.
         multiprocessing_context = mp.get_context("spawn")
@@ -252,14 +216,14 @@ class CELF:
                         if neighbor_node not in activated_nodes:
                             activation_probability = activation_probabilities.get((active_node, neighbor_node), 0.1)
                             neighbor_state = agent_states.get(neighbor_node, "S")
-                            
+
                             # Scaling rule: Resistant nodes ('R') are harder to activate (30% probability)
                             if neighbor_state == "R":
                                 activation_probability *= 0.3
                             # Isolation rule: Fact-checkers ('F') block influence propagation completely
                             elif neighbor_state == "F":
                                 activation_probability = 0.0
-                                
+
                             if activation_probability > 0.0 and rng.random() < activation_probability:
                                 activated_nodes.add(neighbor_node)
                                 next_active_frontier.append(neighbor_node)
@@ -269,9 +233,7 @@ class CELF:
 
         return total_activated_nodes / simulation_rounds
 
-    # ------------------------------------------------------------------
     # Obiettivo "threshold" (allineato alla StateMachine)
-    # ------------------------------------------------------------------
 
     def _is_covered(self, state: str, n_f: int, n_i: int, deg: int) -> bool:
         if deg == 0 or n_f == 0:
@@ -364,7 +326,7 @@ class CELF:
         for source_node, target_node in graph.edges():
             activation_probabilities[(source_node, target_node)] = 1.0 / max(graph.degree(target_node), 1)
             activation_probabilities[(target_node, source_node)] = 1.0 / max(graph.degree(source_node), 1)
-            
+
         return self._simulate_spread(
             graph=graph,
             seeds=seeds,
@@ -383,12 +345,12 @@ def _parallel_evaluate_spread_chunk(
     Bypasses the Global Interpreter Lock (GIL) via ProcessPoolExecutor.
     """
     import random
-    
+
     graph, candidates, agent_states, simulation_rounds, activation_probabilities, base_seed = args
     results = []
     for candidate_node in candidates:
-        # FIX: RNG con seed per candidato -> risultato riproducibile e
-        # indipendente dal numero di core / dalla suddivisione in chunk.
+        # RNG con seed per candidato: il risultato non dipende dal numero di
+        # core o dalla suddivisione in chunk.
         random_generator = random.Random(base_seed * 1_000_003 + candidate_node)
         gain = CELF._simulate_spread(
             graph=graph,

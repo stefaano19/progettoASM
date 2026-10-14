@@ -1,10 +1,7 @@
 """
-src/gnn/trainer.py
-==================
 Training loop per il GraphSAGE link predictor.
 
-Strategia di training
----------------------
+Strategia di training:
 Ad ogni tick temporale, il trainer esegue `epochs_per_step` epoch
 di fine-tuning sul grafo corrente (embeddings perturbati dagli agenti).
 
@@ -20,17 +17,10 @@ Modalita':
   - NumPy:  NESSUN training: i pesi restano quelli iniziali (seed-based) e
             viene solo calcolata la loss. Serve per test e dry-run locali;
             per i risultati usare gnn.use_torch = true.
-  - PyTorch: Adam su BCEWithLogitsLoss — training reale.
+  - PyTorch: Adam su BCEWithLogitsLoss - training reale.
 
 Il trainer mantiene anche il "link predictor inference" che calcola
 gli score su tutti gli archi esistenti + candidati per il rewiring.
-
-Utilizzo
---------
-    from src.gnn.trainer import GNNTrainer
-    trainer = GNNTrainer(model, cfg)
-    trainer.train_step(G, embeddings)
-    scores = trainer.predict_links(G, embeddings, candidate_pairs)
 """
 
 from __future__ import annotations
@@ -50,16 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 class GNNTrainer:
-    """
-    Training + inference per GraphSAGE link predictor.
-
-    Parameters
-    ----------
-    model : GraphSAGEModel
-        Il modello da addestrare.
-    cfg : Config
-        Configurazione (lr, epochs_per_step, ecc.).
-    """
+    """Training + inference per GraphSAGE link predictor."""
 
     def __init__(self, model: "GraphSAGEModel", cfg: "Config") -> None:
         self._model = model
@@ -75,9 +56,7 @@ class GNNTrainer:
         if model.uses_torch:
             self._init_torch_optimizer()
 
-    # ------------------------------------------------------------------
     # Stato dell'ottimizzatore (per i checkpoint)
-    # ------------------------------------------------------------------
 
     def get_optimizer_state(self) -> dict | None:
         """Stato di Adam (momenti) su CPU, da salvare nel checkpoint."""
@@ -98,9 +77,8 @@ class GNNTrainer:
 
     def set_optimizer_state(self, state: dict | None) -> None:
         """
-        Ripristina lo stato di Adam. Prima a ogni resume l'ottimizzatore
-        ripartiva da zero: una run spezzata in piu' sessioni non coincideva
-        con una run continua.
+        Ripristina lo stato di Adam, cosi' una run spezzata in piu' sessioni
+        coincide con una run continua.
         """
         if state is None or not self._model.uses_torch:
             return
@@ -116,29 +94,13 @@ class GNNTrainer:
             lr=self._lr,
         )
 
-    # ------------------------------------------------------------------
-    # Training
-    # ------------------------------------------------------------------
-
     def train_step(
         self,
         G: "nx.Graph",
         embeddings: np.ndarray,
         step: int = 0,
     ) -> float:
-        """
-        Esegui `epochs_per_step` epoch di fine-tuning sul grafo G_t.
-
-        Parameters
-        ----------
-        G : nx.Graph      Grafo corrente.
-        embeddings : np.ndarray  Input embeddings (n, in_dim).
-        step : int        Step temporale corrente (per il seed).
-
-        Returns
-        -------
-        avg_loss : float  Loss media dell'ultimo step di training.
-        """
+        """Esegui `epochs_per_step` epoch di fine-tuning sul grafo G_t."""
         if self._model.uses_torch:
             return self._train_torch(G, embeddings, step)
         else:
@@ -178,17 +140,15 @@ class GNNTrainer:
                     neg_edges.append((u, v))
                     if len(neg_edges) >= n_neg:
                         break
-            # Safety: al massimo 20 batch (prima la condizione di uscita
-            # batch > 32768 non era mai vera, perche' batch <= 16384).
+            # al massimo 20 batch
             batch = min(batch * 2, 16384)
 
         return pos_sample, neg_edges[:n_neg]
 
     def _train_numpy(self, G: "nx.Graph", embeddings: np.ndarray, step: int) -> float:
         """
-        Modalita' numpy: calcola SOLO la loss BCE con i pesi fissi; i pesi non
-        vengono aggiornati (non c'e' backpropagation). La docstring precedente
-        parlava di un aggiornamento euristico che non e' mai esistito.
+        Modalita' numpy: calcola solo la loss BCE con i pesi fissi, senza
+        backpropagation.
         """
         if not self._numpy_warned:
             logger.warning(
@@ -233,7 +193,7 @@ class GNNTrainer:
             return 0.0
 
         from src.gnn.model import build_sparse_adj
-        
+
         device = next(self._model._model.parameters()).device
         h = torch.tensor(embeddings, dtype=torch.float32, device=device)
         adj_sparse = build_sparse_adj(G, device=device, dtype=h.dtype)
@@ -271,10 +231,6 @@ class GNNTrainer:
         logger.debug("[Trainer] torch step=%d | loss=%.4f", step, avg_loss)
         return avg_loss
 
-    # ------------------------------------------------------------------
-    # Inference
-    # ------------------------------------------------------------------
-
     def predict_links(
         self,
         G: "nx.Graph",
@@ -286,10 +242,6 @@ class GNNTrainer:
         Calcola gli score di link per:
           1. Tutti gli archi esistenti (per valutare rimozione).
           2. `candidate_pairs` o 2-hop neighbours (per valutare aggiunta).
-
-        Returns
-        -------
-        dict[(u, v) -> score in [0, 1]]
         """
         out = self._model.forward(G, embeddings)
 
@@ -314,7 +266,7 @@ class GNNTrainer:
             for u, v in candidate_pairs:
                 if (u, v) not in scores and (v, u) not in scores:
                     filtered_cands.append((u, v))
-            
+
             if filtered_cands:
                 u_arr = np.array([u for u, v in filtered_cands])
                 v_arr = np.array([v for u, v in filtered_cands])
@@ -335,9 +287,7 @@ class GNNTrainer:
         """
         Genera coppie candidate per nuovi archi (2-hop neighbours non connessi).
 
-        FIX: prima il generatore era ricreato con lo stesso seed a ogni step,
-        quindi venivano sempre esplorati gli stessi 50 nodi sorgente (e si
-        usciva appena raggiunti 200 candidati, favorendo i primi). Ora:
+        Dettagli:
           - il seed dipende dallo step -> sorgenti diverse a ogni step,
             riproducibili a parita' di seed globale;
           - n_sources sorgenti (default cfg.gnn.rewire_candidate_sources);
@@ -366,10 +316,6 @@ class GNNTrainer:
                 candidates.add((min(u, v), max(u, v)))
 
         return sorted(candidates)
-
-    # ------------------------------------------------------------------
-    # Info
-    # ------------------------------------------------------------------
 
     @property
     def train_history(self) -> list[float]:

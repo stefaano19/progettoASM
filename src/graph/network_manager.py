@@ -1,9 +1,7 @@
 """
-src/graph/network_manager.py
-============================
 CRUD layer sul grafo dinamico durante la simulazione.
 
-Il NetworkManager e' il SOLO punto di accesso alla topologia del grafo:
+Il NetworkManager e' l'unico punto di accesso alla topologia del grafo:
   - nessun modulo esterno tocca G direttamente durante la simulazione
   - ogni operazione di lettura/scrittura passa da qui
   - centralizza il logging delle modifiche strutturali
@@ -14,15 +12,6 @@ Responsabilita':
   - add / remove archi (rewiring)
   - aggiornamento degli embedding dei nodi
   - snapshot delle metriche a ogni step
-
-Utilizzo
---------
-    from src.graph.network_manager import NetworkManager
-    nm = NetworkManager(subG, cfg, community_map=community_map)
-    feed = nm.get_feed(node_id=5, window=5)
-    nm.add_post(node_id=5, post={...})
-    nm.add_edge(3, 7)
-    nm.remove_edge(3, 2)
 """
 
 from __future__ import annotations
@@ -40,7 +29,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
 # Codifica numerica degli stati per le metriche di belief.
 # UNICA fonte di verita': usata sia da get_belief_map() (Fase 2 / pre-intervento)
 # sia da compute_full_influence_report() (post-intervento).
@@ -50,10 +38,8 @@ logger = logging.getLogger(__name__)
 #   R = -1  la rifiuta
 #   F = -1  la contrasta attivamente
 #
-# FIX: prima R valeva +0.5, cioe' "a meta' strada verso I", mentre negli
-# embedding R viene spinto nella direzione OPPOSTA a I. Ora le due
-# rappresentazioni sono coerenti: R ed F stanno dalla parte opposta di I.
-# ---------------------------------------------------------------------------
+# R ed F stanno dalla parte opposta di I, coerentemente con la direzione
+# in cui vengono spinti gli embedding.
 STATE_TO_BELIEF: dict[str, float] = {"S": 0.0, "I": 1.0, "R": -1.0, "F": -1.0}
 BELIEF_RANGE: tuple[float, float] = (
     min(STATE_TO_BELIEF.values()),
@@ -67,20 +53,7 @@ def belief_map_from_states(states: dict[int, str]) -> dict[int, float]:
 
 
 class NetworkManager:
-    """
-    Layer di accesso e mutazione del grafo sociale dinamico.
-
-    Parameters
-    ----------
-    G : nx.Graph
-        Sottografo estratto (nodi rinumerati 0..n-1).
-    cfg : Config
-        Configurazione globale.
-    community_map : dict[int, int] | None
-        Mappa node_id -> community_id (da Louvain).
-    node_features : np.ndarray | None
-        Feature matrix iniziale (n, D). Modificata in-place dagli agenti.
-    """
+    """Layer di accesso e mutazione del grafo sociale dinamico."""
 
     def __init__(
         self,
@@ -112,10 +85,6 @@ class NetworkManager:
 
         # Stato degli agenti: {node_id: "S"|"I"|"R"|"F"}
         self._agent_states: dict[int, str] = {n: "S" for n in self.G.nodes()}
-
-    # ------------------------------------------------------------------
-    # Proprieta' di accesso
-    # ------------------------------------------------------------------
 
     @property
     def nodes(self) -> list[int]:
@@ -151,10 +120,6 @@ class NetworkManager:
         """Converte stati discreti in valori float (codifica STATE_TO_BELIEF)."""
         return belief_map_from_states(self._agent_states)
 
-    # ------------------------------------------------------------------
-    # Feed vicinato
-    # ------------------------------------------------------------------
-
     def get_feed(self, node_id: int, window: int = 5, seed: int | None = None) -> list[dict]:
         """
         Ritorna gli ultimi `window` post per ogni vicino del nodo,
@@ -182,10 +147,6 @@ class NetworkManager:
         feed.sort(key=lambda p: p.get("step", 0), reverse=True)
         max_feed = window * len(nbrs)
         return feed[:max_feed]
-
-    # ------------------------------------------------------------------
-    # Operazioni di scrittura
-    # ------------------------------------------------------------------
 
     def add_post(self, node_id: int, post: dict) -> None:
         """Pubblica un post da parte del nodo."""
@@ -216,12 +177,6 @@ class NetworkManager:
         """
         Aggiorna gli embedding di più nodi in un'unica operazione vettorizzata.
         Molto più veloce di chiamare perturb_embedding() in loop per ogni nodo.
-
-        Parameters
-        ----------
-        node_ids : list[int]  Lista di node_id da aggiornare.
-        deltas   : np.ndarray  Array (len(node_ids), embedding_dim) di delta.
-        clip     : float       Valore massimo assoluto del delta.
         """
         if not node_ids:
             return
@@ -250,13 +205,7 @@ class NetworkManager:
         to_add: list[tuple[int, int]],
         to_remove: list[tuple[int, int]],
     ) -> tuple[list[tuple], list[tuple]]:
-        """
-        Applica in batch le modifiche topologiche prodotte dalla GNN.
-
-        Returns
-        -------
-        actually_added, actually_removed : liste degli archi effettivamente modificati.
-        """
+        """Applica in batch le modifiche topologiche prodotte dalla GNN."""
         added = [(u, v) for u, v in to_add if self.add_edge(u, v)]
         removed = [(u, v) for u, v in to_remove if self.remove_edge(u, v)]
         if added or removed:
@@ -265,10 +214,6 @@ class NetworkManager:
                 len(added), len(removed), self.G.number_of_edges(),
             )
         return added, removed
-
-    # ------------------------------------------------------------------
-    # Persistence
-    # ------------------------------------------------------------------
 
     def save(self, path: str | Path, step: int | None = None) -> None:
         """Salva lo stato completo del NetworkManager (grafo + stati + embeddings)."""
@@ -302,10 +247,6 @@ class NetworkManager:
         nm._post_store = payload.get("post_store", {})
         logger.info("[NM] Checkpoint caricato: %s (step=%s)", p, payload.get("step"))
         return nm
-
-    # ------------------------------------------------------------------
-    # Iteratori
-    # ------------------------------------------------------------------
 
     def iter_edges(self) -> Iterator[tuple[int, int]]:
         yield from self.G.edges()

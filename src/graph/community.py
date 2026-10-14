@@ -1,6 +1,4 @@
 """
-src/graph/community.py
-======================
 Community detection sul sottografo estratto.
 
 Algoritmi supportati (config.community.algorithm):
@@ -11,11 +9,6 @@ Output:
   - community_map: dict {node_id -> community_id}
   - n_communities: int
   - modularity Q associato all'assegnazione
-
-Utilizzo
---------
-    from src.graph.community import detect_communities
-    community_map, n_comm, q = detect_communities(G, cfg)
 """
 
 from __future__ import annotations
@@ -37,43 +30,25 @@ def detect_communities(
     G: nx.Graph,
     cfg: "Config",
 ) -> tuple[dict[int, int], int, float]:
-    """
-    Esegui community detection e restituisce la mappa nodo -> community.
-
-    Parameters
-    ----------
-    G : nx.Graph
-        Grafo (preferibilmente il sottografo estratto).
-    cfg : Config
-        Configurazione con sezione 'community'.
-
-    Returns
-    -------
-    community_map : dict[int, int]
-        {node_id: community_id} per ogni nodo.
-    n_communities : int
-        Numero di community trovate.
-    modularity_q : float
-        Q-score dell'assegnazione.
-    """
+    """Esegui community detection e restituisce la mappa nodo -> community."""
     output_path = cfg.project_root / cfg.community.output_file
     algorithm = cfg.community.algorithm
     seed = cfg.execution.random_seed
 
-    # --- Cache hit ---
+    # Cache hit
     if output_path.exists():
         logger.info("[Community] Caricamento community map da cache: %s", output_path)
         with open(output_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         community_map = {int(k): int(v) for k, v in data["community_map"].items()}
-        
+
         # Validazione cache: se la dimensione non combacia con il grafo, scarta la cache
         if len(community_map) == G.number_of_nodes():
             return community_map, data["n_communities"], data["modularity_q"]
         else:
             logger.warning("[Community] La cache non corrisponde alla dimensione del grafo! Ricalcolo...")
 
-    # --- Algoritmo ---
+    # Algoritmo
     logger.info("[Community] Community detection con algoritmo='%s'...", algorithm)
 
     if algorithm == "louvain":
@@ -91,7 +66,7 @@ def detect_communities(
     # Aggiungi attributo nodo al grafo (utile per NetworkManager)
     nx.set_node_attributes(G, community_map, name="community")
 
-    # --- Salvataggio ---
+    # Salvataggio
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(
@@ -116,12 +91,12 @@ def _louvain(G: nx.Graph, cfg: "Config") -> tuple[dict[int, int], float]:
 
     # louvain_communities restituisce una lista di set (uno per ogni community)
     communities = nx.community.louvain_communities(G, resolution=resolution, seed=seed)
-    
+
     partition: dict[int, int] = {}
     for comm_id, nodes in enumerate(communities):
         for node in nodes:
             partition[node] = comm_id
-            
+
     q = nx.community.modularity(G, communities)
     return partition, q
 

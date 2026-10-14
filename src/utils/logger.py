@@ -1,6 +1,4 @@
 """
-src/utils/logger.py
-===================
 Logger strutturato JSONL per la simulazione.
 
 Ogni riga del file di log e' un oggetto JSON autonomo con:
@@ -10,14 +8,6 @@ Ogni riga del file di log e' un oggetto JSON autonomo con:
   - payload dati
 
 Fornisce anche un configuratore del logging di sistema (rich handler).
-
-Utilizzo
---------
-    from src.utils.logger import setup_logging, SimLogger
-    setup_logging("DEBUG")
-    sim_log = SimLogger(log_path="results/logs/run_001.jsonl", run_id="run_001")
-    sim_log.log_metrics(step=0, metrics={"Q": 0.45, "ECI": 0.61})
-    sim_log.log_agent_decision(step=1, node_id=42, decision={...})
 """
 
 from __future__ import annotations
@@ -31,19 +21,12 @@ from pathlib import Path
 from typing import Any
 
 
-# ---------------------------------------------------------------------------
 # Sistema logging (console) con rich
-# ---------------------------------------------------------------------------
 
 def setup_logging(level: str = "INFO") -> None:
     """
     Configura il logging di sistema con output formattato su console.
     Usa rich se disponibile, altrimenti logging standard.
-
-    Parameters
-    ----------
-    level : str
-        "DEBUG" | "INFO" | "WARNING" | "ERROR"
     """
     numeric_level = getattr(logging, level.upper(), logging.INFO)
 
@@ -69,21 +52,12 @@ def setup_logging(level: str = "INFO") -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
-# ---------------------------------------------------------------------------
-# SimLogger — JSONL structured logger
-# ---------------------------------------------------------------------------
+# SimLogger - JSONL structured logger
 
 class SimLogger:
     """
     Logger strutturato per la simulazione.
     Scrive ogni evento come riga JSONL nel file di log.
-
-    Parameters
-    ----------
-    log_path : str | Path
-        Percorso del file .jsonl di output.
-    run_id : str | None
-        Identificatore univoco per questa run. Auto-generato se None.
     """
 
     def __init__(self, log_path: str | Path, run_id: str | None = None) -> None:
@@ -93,10 +67,6 @@ class SimLogger:
         self._logger = logging.getLogger("SimLogger")
         self._file = open(self.log_path, "a", encoding="utf-8")
         self._logger.info("[SimLogger] Logging su: %s (run_id=%s)", self.log_path, self.run_id)
-
-    # ------------------------------------------------------------------
-    # Core write
-    # ------------------------------------------------------------------
 
     def _write(self, event_type: str, step: int | None, payload: dict[str, Any]) -> None:
         record = {
@@ -109,10 +79,6 @@ class SimLogger:
         self._file.write(json.dumps(record, ensure_ascii=False) + "\n")
         self._file.flush()
 
-    # ------------------------------------------------------------------
-    # Event methods
-    # ------------------------------------------------------------------
-
     def log_run_start(self, config_hash: str, seed: int, extra: dict | None = None) -> None:
         """Primo record del file: metadati della run."""
         self._write("run_start", step=None, payload={
@@ -120,7 +86,7 @@ class SimLogger:
             "random_seed": seed,
             **(extra or {}),
         })
-        self._logger.info("[SimLogger] Run avviata — config_hash=%s", config_hash)
+        self._logger.info("[SimLogger] Run avviata - config_hash=%s", config_hash)
 
     def log_metrics(self, step: int, metrics: dict[str, float]) -> None:
         """Metriche di rete aggregate (Q, ECI, BP, IR, ...)."""

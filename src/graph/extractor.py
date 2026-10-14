@@ -1,6 +1,4 @@
 """
-src/graph/extractor.py
-======================
 Campionamento di un sottografo connesso e rappresentativo da ogbl-collab.
 
 Strategie disponibili (config.subgraph.strategy):
@@ -10,11 +8,6 @@ Strategie disponibili (config.subgraph.strategy):
   - "forest_fire"   : Forest Fire Sampling (Leskovec & Faloutsos, KDD 2006)
 
 Il sottografo viene salvato come .gpickle e le feature vengono allineate.
-
-Utilizzo
---------
-    from src.graph.extractor import extract_subgraph
-    subG, sub_features = extract_subgraph(G, node_features, cfg)
 """
 
 from __future__ import annotations
@@ -34,40 +27,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
-
 def extract_subgraph(
     G: nx.Graph,
     node_features: np.ndarray,
     cfg: "Config",
 ) -> tuple[nx.Graph, np.ndarray, dict[int, int]]:
-    """
-    Estrai un sottografo connesso di dimensione target_nodes.
-
-    Parameters
-    ----------
-    G : nx.Graph
-        Grafo completo (ogbl-collab).
-    node_features : np.ndarray
-        Feature matrix originale (N, D).
-    cfg : Config
-        Configurazione con sezione 'subgraph'.
-
-    Returns
-    -------
-    subG : nx.Graph
-        Sottografo estratto (nodi rinumerati 0..n-1).
-    sub_features : np.ndarray
-        Feature matrix allineata al sottografo (n, D).
-    node_map : dict[int, int]
-        Mappa old_node_id -> new_node_id nel sottografo.
-    """
+    """Estrai un sottografo connesso di dimensione target_nodes."""
     output_path = cfg.project_root / cfg.subgraph.output_file
     feature_path = cfg.project_root / cfg.gnn.embedding_file
 
-    # --- Cache hit ---
+    # Cache hit
     if output_path.exists() and feature_path.exists():
         logger.info("[Extractor] Caricamento sottografo da cache: %s", output_path)
         with open(output_path, "rb") as f:
@@ -75,7 +44,7 @@ def extract_subgraph(
         sub_features = np.load(str(feature_path))
         return data["graph"], sub_features, data["node_map"]
 
-    # --- Estrazione ---
+    # Estrazione
     strategy = cfg.subgraph.strategy
     target_n = cfg.subgraph.target_nodes
     seed = cfg.execution.random_seed
@@ -126,12 +95,12 @@ def extract_subgraph(
             subG_raw.number_of_nodes(),
         )
 
-    # --- Rinumerazione nodi 0..n-1 ---
+    # Rinumerazione nodi 0..n-1
     old_nodes = sorted(subG_raw.nodes())
     node_map = {old: new for new, old in enumerate(old_nodes)}
     subG = nx.relabel_nodes(subG_raw, node_map)
 
-    # --- Feature allineate ---
+    # Feature allineate
     sub_features = node_features[old_nodes]  # (n, D)
 
     logger.info(
@@ -141,7 +110,7 @@ def extract_subgraph(
         nx.density(subG),
     )
 
-    # --- Salvataggio ---
+    # Salvataggio
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "wb") as f:
         pickle.dump(
@@ -154,10 +123,6 @@ def extract_subgraph(
 
     return subG, sub_features, node_map
 
-
-# ---------------------------------------------------------------------------
-# Strategie di campionamento
-# ---------------------------------------------------------------------------
 
 def _get_seed_node(G: nx.Graph, strategy: str, rng_seed: int) -> int:
     """Seleziona il nodo di partenza per BFS/random walk."""
@@ -271,25 +236,10 @@ def _forest_fire_sample(
 
     Algoritmo:
       1. Scegli un nodo seme (ambassador).
-      2. Genera x ~ Geometric(1 - forward_prob) — numero di vicini da "bruciare".
+      2. Genera x ~ Geometric(1 - forward_prob) - numero di vicini da "bruciare".
       3. Seleziona x vicini non visitati a caso e aggiungili alla frontiera.
       4. Per ogni vicino bruciato, ripeti ricorsivamente (con stack, non ricorsione).
       5. Se la frontiera si esaurisce, ricomincia da un nuovo nodo random.
-
-    Parameters
-    ----------
-    G : nx.Graph
-        Grafo sorgente (deve essere connesso).
-    target_n : int
-        Numero target di nodi.
-    seed : int
-        Seed per riproducibilita'.
-    seed_strategy : str
-        Strategia per il nodo seme iniziale.
-    forward_prob : float
-        Probabilita' di propagazione del fuoco. Valori tipici: 0.4-0.7.
-        Valori piu' alti producono sottografi piu' densi (simili a BFS).
-        Valori piu' bassi producono campioni piu' sparsi e diversificati.
     """
     import random
     rng = random.Random(seed)

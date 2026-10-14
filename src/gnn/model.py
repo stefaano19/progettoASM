@@ -1,29 +1,19 @@
 """
-src/gnn/model.py
-================
 GraphSAGE con doppia modalita' di esecuzione:
 
-  MODE 1 — NumPy (always available, no GPU)
+  MODE 1 - NumPy (always available, no GPU)
     Forward pass deterministico con pesi fissi (seed-based).
     Aggregazione: mean pooling dei vicini.
     Usato in locale per test e dry-run.
 
-  MODE 2 — PyTorch (optional, GPU on Kaggle)
+  MODE 2 - PyTorch (optional, GPU on Kaggle)
     GraphSAGE con 2 layer, gradiente completo, training via SGD.
     Attivato automaticamente se `import torch` ha successo.
     Usa lo stesso schema di aggregazione del numpy mode.
 
-Link Prediction
----------------
+Link Prediction:
 Entrambe le modalita' usano il dot product sui vettori di output:
     score(u, v) = sigmoid(h_u . h_v)
-
-Utilizzo
---------
-    from src.gnn.model import GraphSAGEModel
-    model = GraphSAGEModel(in_dim=64, hidden_dim=128, out_dim=64, seed=42)
-    embeddings = model.forward(G, node_embeddings)       # (n, out_dim)
-    score = model.link_score(embeddings[u], embeddings[v])  # float in [0,1]
 """
 
 from __future__ import annotations
@@ -41,23 +31,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
 # Detect PyTorch
-# ---------------------------------------------------------------------------
 try:
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
     _TORCH_AVAILABLE = True
-    logger.debug("[GraphSAGE] PyTorch disponibile — modalita' torch.")
+    logger.debug("[GraphSAGE] PyTorch disponibile - modalita' torch.")
 except ImportError:
     _TORCH_AVAILABLE = False
-    logger.debug("[GraphSAGE] PyTorch non disponibile — modalita' numpy.")
+    logger.debug("[GraphSAGE] PyTorch non disponibile - modalita' numpy.")
 
-
-# ---------------------------------------------------------------------------
-# Utility
-# ---------------------------------------------------------------------------
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-np.clip(x, -50, 50)))
@@ -76,9 +60,7 @@ def _tanh(x: np.ndarray) -> np.ndarray:
 INITIAL_LOGIT_SCALE = 5.0
 
 
-# ---------------------------------------------------------------------------
 # NumPy GraphSAGE (fallback always available)
-# ---------------------------------------------------------------------------
 
 class _NumpySAGELayer:
     """
@@ -115,7 +97,7 @@ class _NumpySAGELayer:
 class _NumpyGraphSAGE:
     """
     2-layer GraphSAGE in pure numpy.
-    Weights are fixed (no training) — used for local testing.
+    Weights are fixed (no training) - used for local testing.
     """
 
     def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, seed: int) -> None:
@@ -153,36 +135,34 @@ class _NumpyGraphSAGE:
             self.logit_scale = float(weights["logit_scale"])
 
 
-# ---------------------------------------------------------------------------
 # PyTorch GraphSAGE (optional)
-# ---------------------------------------------------------------------------
 
 if _TORCH_AVAILABLE:
     def build_sparse_adj(G: "nx.Graph", device="cpu", dtype=None) -> "torch.Tensor":
         import networkx as nx
         import numpy as np
-        
+
         nodes = sorted(G.nodes())
         A = nx.to_scipy_sparse_array(G, nodelist=nodes, format="coo", dtype=np.float32)
-        
+
         row = A.row
         col = A.col
         data = np.ones_like(row, dtype=np.float32)
-        
+
         degrees = np.array(A.sum(axis=1)).flatten()
         isolated = np.where(degrees == 0)[0]
-        
+
         if len(isolated) > 0:
             row = np.concatenate([row, isolated])
             col = np.concatenate([col, isolated])
             data = np.concatenate([data, np.ones(len(isolated), dtype=np.float32)])
             degrees[isolated] = 1.0
-            
+
         data = data / degrees[row]
-        
+
         indices = torch.tensor(np.vstack((row, col)), dtype=torch.int64)
         values = torch.tensor(data, dtype=dtype if dtype is not None else torch.float32)
-        
+
         adj_sparse = torch.sparse_coo_tensor(indices, values, torch.Size(A.shape), device=device)
         return adj_sparse.coalesce()
 
@@ -202,11 +182,8 @@ if _TORCH_AVAILABLE:
         def __init__(self, in_dim: int, hidden_dim: int, out_dim: int) -> None:
             super().__init__()
             self.layer1 = _TorchSAGELayer(in_dim, hidden_dim)
-            # FIX: ultimo layer SENZA ReLU. Con ReLU + normalizzazione L2 gli
-            # embedding di output erano tutti non negativi e di norma 1, quindi
-            # il prodotto scalare stava in [0, 1] e lo score sigmoid in
-            # [0.50, 0.73]: nessun arco poteva scendere sotto la soglia di
-            # rimozione e il modello non poteva separare davvero i negativi.
+            # Ultimo layer senza ReLU: con ReLU + norma L2 il prodotto scalare
+            # resterebbe in [0, 1] e lo score non scenderebbe mai sotto 0.5.
             self.layer2 = _TorchSAGELayer(hidden_dim, out_dim, activation=False)
             # Scala appresa del logit: con output di norma 1 lo score restava
             # in [0.27, 0.73] anche senza ReLU (vedi INITIAL_LOGIT_SCALE).
@@ -233,22 +210,10 @@ if _TORCH_AVAILABLE:
                 raise KeyError(f"Pesi GNN incompatibili: mancanti={missing} inattesi={unexpected}")
 
 
-# ---------------------------------------------------------------------------
 # Public facade: GraphSAGEModel
-# ---------------------------------------------------------------------------
 
 class GraphSAGEModel:
-    """
-    GraphSAGE facade che seleziona automaticamente numpy o torch backend.
-
-    Parameters
-    ----------
-    in_dim : int       Dimensione input embedding.
-    hidden_dim : int   Dimensione layer nascosto.
-    out_dim : int      Dimensione embedding output.
-    seed : int         Per init deterministico (numpy mode).
-    force_numpy : bool Forza la modalita' numpy anche se torch e' disponibile.
-    """
+    """GraphSAGE facade che seleziona automaticamente numpy o torch backend."""
 
     def __init__(
         self,
@@ -265,8 +230,7 @@ class GraphSAGEModel:
         if self._use_torch:
             import torch
             self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            # FIX: seed PRIMA di creare il modello (prima veniva impostato dopo,
-            # quindi l'inizializzazione dei pesi non dipendeva dal seed).
+            # seed prima di creare il modello, per l'inizializzazione dei pesi
             torch.manual_seed(seed)
             self._model = _TorchGraphSAGE(in_dim, hidden_dim, out_dim).to(self._device)
             logger.info("[GraphSAGE] Backend: PyTorch (%s) | in=%d hid=%d out=%d", self._device, in_dim, hidden_dim, out_dim)
@@ -279,19 +243,7 @@ class GraphSAGEModel:
         return self._use_torch
 
     def forward(self, G: "nx.Graph", embeddings: np.ndarray) -> np.ndarray:
-        """
-        Forward pass: calcola nuovi embedding per tutti i nodi.
-
-        Parameters
-        ----------
-        G : nx.Graph            Grafo corrente (topologia).
-        embeddings : np.ndarray Input embedding (n, in_dim).
-
-        Returns
-        -------
-        np.ndarray (n, out_dim) — embedding di norma sqrt(scala dei logit),
-        cosi' che il prodotto scalare sia scala * coseno.
-        """
+        """Forward pass: calcola nuovi embedding per tutti i nodi."""
         if self._use_torch:
             import torch
             h = torch.tensor(embeddings, dtype=torch.float32, device=self._device)
@@ -317,13 +269,7 @@ class GraphSAGEModel:
         embeddings: np.ndarray,
         candidates: list[tuple[int, int]],
     ) -> dict[tuple[int, int], float]:
-        """
-        Calcola lo score per una lista di coppie (u, v).
-
-        Returns
-        -------
-        dict[(u, v), score]
-        """
+        """Calcola lo score per una lista di coppie (u, v)."""
         return {
             (u, v): self.link_score(embeddings[u], embeddings[v])
             for u, v in candidates

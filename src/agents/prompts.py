@@ -1,6 +1,4 @@
 """
-src/agents/prompts.py
-=====================
 Template dei prompt per gli agenti LLM.
 
 Il system prompt e' il "DNA" dell'agente: definisce la sua identita',
@@ -10,8 +8,7 @@ e il formato di output atteso.
 Il user prompt e' il "feed" dell'agente: contiene i post visibili nel
 vicinato + il contesto della simulazione al passo t.
 
-Schema output JSON atteso dall'LLM
-------------------------------------
+Schema output JSON atteso dall'LLM:
 {
   "reasoning": "<1-3 frasi di ragionamento interno>",
   "opinion":   "<opinione testuale da pubblicare, max 200 chars>",
@@ -19,12 +16,6 @@ Schema output JSON atteso dall'LLM
   "proposed_state": "<S|I|R>",
   "spread_intent":  <true|false>
 }
-
-Utilizzo
---------
-    from src.agents.prompts import build_system_prompt, build_user_prompt
-    sys_prompt = build_system_prompt(node_id=5, community=2, state="S", cfg=cfg)
-    user_prompt = build_user_prompt(feed=[...], state="S", step=3, cfg=cfg)
 """
 
 from __future__ import annotations
@@ -34,10 +25,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.utils.config import Config
 
-
-# ---------------------------------------------------------------------------
-# Personalita' per community
-# ---------------------------------------------------------------------------
 
 _COMMUNITY_PERSONALITIES: dict[int, dict[str, str]] = {
     0: {
@@ -86,10 +73,6 @@ def _get_personality(community: int) -> dict[str, str]:
     return _COMMUNITY_PERSONALITIES.get(community % 4, _DEFAULT_PERSONALITY)
 
 
-# ---------------------------------------------------------------------------
-# Descrizione degli stati
-# ---------------------------------------------------------------------------
-
 _STATE_DESCRIPTIONS: dict[str, str] = {
     "S": (
         "You are currently NEUTRAL (Susceptible). You have not yet been convinced "
@@ -112,9 +95,9 @@ _STATE_DESCRIPTIONS: dict[str, str] = {
 }
 
 _INFLUENCE_LABELS: dict[str, str] = {
-    "high":   "High influence (Hub) — many people see your content",
-    "medium": "Medium influence — moderate reach within your community",
-    "low":    "Low influence — your content reaches a small local audience",
+    "high":   "High influence (Hub) - many people see your content",
+    "medium": "Medium influence - moderate reach within your community",
+    "low":    "Low influence - your content reaches a small local audience",
 }
 
 
@@ -141,9 +124,8 @@ def influence_levels(degrees: dict[int, int]) -> dict[int, str]:
     """
     Etichetta di influenza per nodo dai PERCENTILI del grado.
 
-    FIX: le soglie assolute di _influence_label (0.03 / 0.1 di centralita')
-    non venivano mai raggiunte nel grafo reale: anche gli hub ricevevano
-    "Low influence". Qui:
+    Soglie relative (percentili del grado), perche' quelle assolute sulla
+    centralita' non vengono raggiunte nel grafo reale:
       - high   : grado >= 90esimo percentile
       - medium : grado >= 60esimo percentile
       - low    : il resto
@@ -169,10 +151,6 @@ def influence_levels(degrees: dict[int, int]) -> dict[int, str]:
     return levels
 
 
-# ---------------------------------------------------------------------------
-# System Prompt
-# ---------------------------------------------------------------------------
-
 SYSTEM_PROMPT_TEMPLATE = """
 You are a researcher on an academic social network. Your behaviour is shaped by your position and community.
 
@@ -196,18 +174,18 @@ At each step you must:
 2. Reflect on how those posts affect your views.
 3. Decide whether and how to respond (post, stay silent, change stance).
 
-=== OUTPUT FORMAT (STRICT JSON — no markdown, no preamble) ===
+=== OUTPUT FORMAT (STRICT JSON - no markdown, no preamble) ===
 {{
   "reasoning":      "<1-3 sentences of internal reflection>",
   "opinion":        "<short post text to publish, max 200 chars, or empty string to stay silent>",
   "susceptibility": <float 0.0 to 1.0, how open you are to the narrative right now>,
-  "proposed_state": "<S, I, or R — your self-assessed state after reading the feed>",
+  "proposed_state": "<S, I, or R - your self-assessed state after reading the feed>",
   "spread_intent":  <true if you want to spread the narrative, false otherwise>
 }}
 
 Rules:
 - susceptibility 0.0 = completely resistant, 1.0 = fully convinced.
-- proposed_state must be S, I, or R (never F — that is assigned externally).
+- proposed_state must be S, I, or R (never F - that is assigned externally).
 - If you choose to be silent, set opinion to an empty string "".
 - Stay consistent with your personality and current state.
 """.strip()
@@ -248,9 +226,7 @@ def build_system_prompt(
     )
 
 
-# ---------------------------------------------------------------------------
 # User Prompt (feed + contesto)
-# ---------------------------------------------------------------------------
 
 USER_PROMPT_TEMPLATE = """
 === SIMULATION STEP {step} ===
@@ -279,24 +255,9 @@ def build_user_prompt(
     neighbour_states: dict[str, int],
     memory_window: int = 5,
 ) -> str:
-    """
-    Costruisce il user prompt per un passo temporale specifico.
-
-    Parameters
-    ----------
-    feed : list[dict]
-        Post visibili nel vicinato (da NetworkManager.get_feed).
-    state : str
-        Stato corrente dell'agente.
-    step : int
-        Step temporale corrente.
-    neighbour_states : dict[str, int]
-        Conteggio degli stati dei vicini {"S": n, "I": m, ...}.
-    memory_window : int
-        Numero di post per vicino nella finestra.
-    """
+    """Costruisce il user prompt per un passo temporale specifico."""
     if not feed:
-        feed_text = "(Your feed is empty — no colleagues have posted recently.)"
+        feed_text = "(Your feed is empty - no colleagues have posted recently.)"
     else:
         lines = []
         for post in feed[:memory_window * 3]:  # Cap totale
@@ -324,9 +285,7 @@ def build_user_prompt(
     )
 
 
-# ---------------------------------------------------------------------------
 # Prompt di aggiornamento state (usato quando lo stato cambia)
-# ---------------------------------------------------------------------------
 
 def build_state_update_note(old_state: str, new_state: str) -> str:
     """

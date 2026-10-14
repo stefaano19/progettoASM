@@ -1,13 +1,10 @@
 """
-src/agents/seeder.py
-====================
 Identificazione e selezione dei "Pazienti Zero" (patient zero nodes).
 
 I pazienti zero sono i nodi che ricevono lo stato iniziale "I" (Infected)
 all'inizio della simulazione e fungono da sorgente della diffusione.
 
-Strategie di selezione
------------------------
+Strategie di selezione:
   "pagerank"    : top-k nodi per PageRank (influencer globali)
   "betweenness" : top-k per Betweenness centrality (bridge nodes)
   "katz"        : top-k per Katz centrality (influenza locale + globale)
@@ -16,18 +13,6 @@ Strategie di selezione
   "cross_community": seleziona k nodi distribuiti su community diverse
                      (massimizza copertura iniziale)
   "random"      : campionamento casuale riproducibile con seed
-
-Utilizzo
---------
-    from src.agents.seeder import Seeder
-    seeder = Seeder(cfg)
-    patient_zero_ids = seeder.select(
-        G=subG,
-        centralities=centrality_dict,
-        community_map=community_map,
-        k=5,
-    )
-    seeder.inject(network_manager, patient_zero_ids)
 """
 
 from __future__ import annotations
@@ -47,16 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 class Seeder:
-    """
-    Seleziona e inietta i nodi paziente zero nel grafo.
-
-    Parameters
-    ----------
-    cfg : Config
-        Configurazione globale.
-    strategy : str
-        Strategia di selezione (override di config se fornita).
-    """
+    """Seleziona e inietta i nodi paziente zero nel grafo."""
 
     VALID_STRATEGIES = {
         "pagerank", "betweenness", "katz",
@@ -77,10 +53,6 @@ class Seeder:
             )
         self._strategy = strategy
 
-    # ------------------------------------------------------------------
-    # Selezione
-    # ------------------------------------------------------------------
-
     def select(
         self,
         G: nx.Graph,
@@ -88,25 +60,7 @@ class Seeder:
         community_map: dict[int, int],
         k: int | None = None,
     ) -> list[int]:
-        """
-        Seleziona i k nodi paziente zero.
-
-        Parameters
-        ----------
-        G : nx.Graph
-            Sottografo su cui operare.
-        centralities : dict[int, dict[str, float]]
-            Dizionario {node_id: {metric: value}} da compute_centralities().
-        community_map : dict[int, int]
-            {node_id: community_id} da Louvain.
-        k : int | None
-            Numero di seed. Default: initial_infection_rate * n_nodes.
-
-        Returns
-        -------
-        list[int]
-            Lista dei node_id selezionati come pazienti zero.
-        """
+        """Seleziona i k nodi paziente zero."""
         n = G.number_of_nodes()
         if k is None:
             rate = self._cfg.simulation.initial_infection_rate
@@ -137,35 +91,20 @@ class Seeder:
         )
         return selected
 
-    # ------------------------------------------------------------------
-    # Iniezione
-    # ------------------------------------------------------------------
-
     def inject(
         self,
         network_manager: "NetworkManager",
         patient_zero_ids: list[int],
         initial_state: str = "I",
     ) -> None:
-        """
-        Inietta lo stato iniziale nei nodi paziente zero.
-
-        Parameters
-        ----------
-        network_manager : NetworkManager
-            Grafo dinamico.
-        patient_zero_ids : list[int]
-            Nodi da portare allo stato `initial_state`.
-        initial_state : str
-            "I" per infezione, "F" per fact-checker CELF.
-        """
+        """Inietta lo stato iniziale nei nodi paziente zero."""
         for node_id in patient_zero_ids:
             network_manager.set_state(node_id, initial_state)
             # Aggiungi un post iniziale per rendere la diffusione visibile
             if initial_state == "I":
                 content = (
                     f"[SEED] I am convinced about '{self._cfg.simulation.topic}'. "
-                    "Join me — the evidence is overwhelming."
+                    "Join me - the evidence is overwhelming."
                 )
             else:
                 content = (
@@ -184,10 +123,6 @@ class Seeder:
             len(patient_zero_ids), initial_state,
         )
 
-    # ------------------------------------------------------------------
-    # Score helper
-    # ------------------------------------------------------------------
-
     def _scores_to_ranked(
         self,
         scores: dict[int, float],
@@ -195,10 +130,6 @@ class Seeder:
     ) -> list[int]:
         """Ordina per score decrescente e prende i top-k."""
         return sorted(scores, key=lambda n: scores[n], reverse=True)[:k]
-
-    # ------------------------------------------------------------------
-    # Strategie
-    # ------------------------------------------------------------------
 
     def _by_pagerank(
         self,
@@ -331,10 +262,6 @@ class Seeder:
     ) -> list[int]:
         rng = random.Random(self._seed)
         return rng.sample(list(G.nodes()), k)
-
-    # ------------------------------------------------------------------
-    # Report
-    # ------------------------------------------------------------------
 
     def describe_seeds(
         self,

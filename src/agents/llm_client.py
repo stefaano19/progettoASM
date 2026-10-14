@@ -1,24 +1,14 @@
 """
-src/agents/llm_client.py
-========================
 Wrapper LLM portabile con supporto Gemini API, OpenAI-compatible (Ollama/vLLM)
 e un MockLLMClient per testing senza costi API.
 
-Features
---------
+Features:
 - Backend selezionato da config.yaml (llm.backend: "api" | "local")
 - Retry automatico con exponential backoff su errori transitori
 - Estrazione JSON robusta dall'output testuale (strip fences, fallback)
 - TokenBudget globale con warn e hard-limit
 - MockLLMClient deterministico per test e dry-run locali
 - DiskCache per caching persistente delle risposte (utile per Kaggle 12h limit)
-
-Utilizzo
---------
-    from src.agents.llm_client import LLMClient, MockLLMClient, LLMResponse
-    client = LLMClient.from_config(cfg)
-    response = client.chat([{"role": "user", "content": "..."}])
-    print(response.content, response.total_tokens)
 """
 
 from __future__ import annotations
@@ -40,10 +30,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# LLMResponse
-# ---------------------------------------------------------------------------
-
 @dataclass
 class LLMResponse:
     """Risposta normalizzata da qualsiasi backend LLM."""
@@ -60,9 +46,7 @@ class LLMResponse:
         return self.input_tokens + self.output_tokens
 
 
-# ---------------------------------------------------------------------------
 # DiskCache (Persistenza per run lunghe su Kaggle)
-# ---------------------------------------------------------------------------
 
 class LLMDiskCache:
     """
@@ -70,12 +54,9 @@ class LLMDiskCache:
     Evita di rifare chiamate API costose se la sessione (es. Kaggle) viene
     interrotta a meta' di uno step lungo.
 
-    FIX: prima era un singleton unico su "results/checkpoints/llm_cache.jsonl"
-    (relativo alla directory di lavoro), condiviso con MockLLMClient e con i
-    test, e la chiave non conteneva il modello: una run reale poteva leggere
-    risposte del mock o di un altro modello. Ora c'e' un'istanza per file
-    (indicato da LLMClient.from_config) e la chiave include backend, modello e
-    parametri di generazione (vedi LLMClient._cache_namespace).
+    Un'istanza per file (indicato da LLMClient.from_config). La chiave include
+    backend, modello e parametri di generazione (LLMClient._cache_namespace),
+    cosi' risposte di modelli diversi non si mescolano.
     """
     _instances: dict[Path, "LLMDiskCache"] = {}
     _lock = threading.Lock()
@@ -94,7 +75,7 @@ class LLMDiskCache:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache_file = self.cache_dir / "llm_cache.jsonl"
         self.cache = {}
-        
+
         # Load existing cache
         if self.cache_file.exists():
             logger.info("[LLMDiskCache] Caricamento cache da %s...", self.cache_file)
@@ -107,7 +88,7 @@ class LLMDiskCache:
                 logger.info("[LLMDiskCache] Caricate %d risposte.", len(self.cache))
             except Exception as e:
                 logger.error("[LLMDiskCache] Errore caricamento cache: %s", e)
-        
+
         self._file_handle = open(self.cache_file, "a", encoding="utf-8")
         self._write_lock = threading.Lock()
 
@@ -127,9 +108,7 @@ class LLMDiskCache:
                 logger.error("[LLMDiskCache] Errore scrittura cache: %s", e)
 
 
-# ---------------------------------------------------------------------------
 # TokenBudget (singleton globale)
-# ---------------------------------------------------------------------------
 
 class TokenBudget:
     """
@@ -179,10 +158,6 @@ class TokenBudget:
         cls._total_input = 0
         cls._total_output = 0
 
-
-# ---------------------------------------------------------------------------
-# JSON extraction utility
-# ---------------------------------------------------------------------------
 
 FALLBACK_AGENT_OUTPUT = {
     "reasoning": "Fallback: LLM output non parsabile.",
@@ -250,15 +225,13 @@ def extract_json(text: str, fallback: dict | None = None) -> tuple[dict, bool]:
             return obj, False
 
     logger.warning(
-        "[LLMClient] JSON non parsabile — uso fallback. Estratto risposta: %r",
+        "[LLMClient] JSON non parsabile - uso fallback. Estratto risposta: %r",
         text[:200],
     )
     return fb, True
 
 
-# ---------------------------------------------------------------------------
 # Backend: Gemini
-# ---------------------------------------------------------------------------
 
 class _GeminiBackend:
     def __init__(self, cfg: dict) -> None:
@@ -315,9 +288,7 @@ class _GeminiBackend:
         )
 
 
-# ---------------------------------------------------------------------------
 # Backend: OpenAI-compatible (OpenAI / Ollama / vLLM)
-# ---------------------------------------------------------------------------
 
 class _OpenAICompatibleBackend:
     def __init__(self, cfg: dict, backend_type: str = "openai") -> None:
@@ -338,8 +309,7 @@ class _OpenAICompatibleBackend:
         self._model = cfg.get("model", "llama3")
         self._temperature = cfg.get("temperature", 0.7)
         self._max_tokens = cfg.get("max_tokens", 512)
-        # FIX: prima timeout=None — un server vLLM bloccato (connessione
-        # aperta ma nessuna risposta) fermava la run per sempre.
+        # Timeout esplicito: un server vLLM bloccato fermerebbe la run.
         self._timeout = cfg.get("timeout", 300.0)
 
     def chat(self, messages: list[dict], seed: int | None = None) -> LLMResponse:
@@ -368,9 +338,7 @@ class _OpenAICompatibleBackend:
         )
 
 
-# ---------------------------------------------------------------------------
 # LLMClient (pubblico)
-# ---------------------------------------------------------------------------
 
 class LLMClient:
     """
@@ -456,14 +424,12 @@ class LLMClient:
                 req_seed = (int(msg_hash[:8], 16) + attempt) % (2**31 - 1)
                 response = self._backend.chat(messages, seed=req_seed)
                 TokenBudget.record(response.input_tokens, response.output_tokens)
-                
-                # BUG FIX: Validiamo il JSON PRIMA di salvare in cache.
-                # Se vLLM restituisce testo non-JSON valido, generiamo eccezione
-                # per innescare il retry invece di salvare immondizia nella cache!
+
+                # JSON non valido -> eccezione e retry, senza salvarlo in cache
                 _, is_fallback_parse = extract_json(response.content)
                 if is_fallback_parse:
                     raise ValueError(f"vLLM output is not valid JSON: {response.content[:100]}")
-                
+
                 self._cache.set(cache_key, {
                     "content": response.content,
                     "input_tokens": response.input_tokens,
@@ -478,7 +444,7 @@ class LLMClient:
                 )
                 return response
             except RuntimeError:
-                raise  # Hard limit — propaga subito
+                raise  # Hard limit - propaga subito
             except Exception as exc:
                 last_exc = exc
                 wait = 2 ** attempt
@@ -493,8 +459,7 @@ class LLMClient:
             content=json.dumps(FALLBACK_AGENT_OUTPUT),
             is_fallback=True,
         )
-        # BUG FIX: NON salvare mai il fallback nella cache su disco! 
-        # Altrimenti il nodo leggerà per sempre un errore al posto di chiamare l'API.
+        # Il fallback non va in cache, altrimenti verrebbe riletto ogni volta
         return fallback_resp
 
     @staticmethod
@@ -502,9 +467,7 @@ class LLMClient:
         return TokenBudget.summary()
 
 
-# ---------------------------------------------------------------------------
-# MockLLMClient — per test e dry-run senza API
-# ---------------------------------------------------------------------------
+# MockLLMClient - per test e dry-run senza API
 
 class MockLLMClient:
     """
@@ -515,9 +478,7 @@ class MockLLMClient:
         self._infection_rate = infection_rate
         self._call_count = 0
         self._lock = threading.Lock()
-        # FIX: il mock non usa la cache su disco. Prima scriveva nello stesso
-        # llm_cache.jsonl del client reale (anche durante i test), e una run
-        # reale successiva poteva leggere quelle risposte finte.
+        # Il mock non usa la cache su disco, per non sporcare quella reale.
 
     def chat(self, messages: list[dict]) -> LLMResponse:
         import hashlib

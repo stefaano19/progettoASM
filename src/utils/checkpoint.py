@@ -1,9 +1,7 @@
 """
-src/utils/checkpoint.py
-=======================
 Salvataggio e caricamento dello stato completo della simulazione.
 
-Un checkpoint contiene TUTTO il necessario per riprendere da un
+Un checkpoint contiene tutto il necessario per riprendere da un
 qualsiasi step t:
   - NetworkManager (grafo + stati agenti + post + embeddings)
   - Pesi GNN
@@ -13,14 +11,6 @@ qualsiasi step t:
 
 Il checkpoint e' un singolo file .pkl (pickle) con struttura
 documentata in `CheckpointData`.
-
-Utilizzo
---------
-    from src.utils.checkpoint import CheckpointManager
-    cm = CheckpointManager(cfg)
-    cm.save(step=5, network_manager=nm, gnn_weights=model.get_weights())
-    state = cm.load_latest()
-    state = cm.load(step=5)
 """
 
 from __future__ import annotations
@@ -39,9 +29,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
 # CheckpointData (struttura serializzata)
-# ---------------------------------------------------------------------------
 
 @dataclass
 class CheckpointData:
@@ -63,22 +51,12 @@ class CheckpointData:
     meta: dict[str, Any] = field(default_factory=dict)
 
 
-# ---------------------------------------------------------------------------
-# CheckpointManager
-# ---------------------------------------------------------------------------
-
 class CheckpointManager:
     """
     Gestisce il salvataggio e il caricamento dei checkpoint di simulazione.
 
     I checkpoint sono salvati in:
         {cfg.paths.checkpoints}/ckpt_step_{step:04d}.pkl
-
-    Parameters
-    ----------
-    cfg : Config
-    keep_last : int
-        Numero di checkpoint da mantenere (gli altri vengono eliminati).
     """
 
     FILENAME_PATTERN = "ckpt_step_{step:04d}.pkl"
@@ -90,10 +68,6 @@ class CheckpointManager:
         self._checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self._cumulative_metrics: list[dict] = []
 
-    # ------------------------------------------------------------------
-    # Save
-    # ------------------------------------------------------------------
-
     def save(
         self,
         step: int,
@@ -102,22 +76,7 @@ class CheckpointManager:
         patient_zero_ids: list[int] | None = None,
         meta: dict | None = None,
     ) -> Path:
-        """
-        Salva lo stato completo al passo `step`.
-
-        Parameters
-        ----------
-        step : int
-        network_manager : NetworkManager
-        gnn_weights : dict | None
-            Pesi del modello GNN (numpy arrays).
-        patient_zero_ids : list[int] | None
-        meta : dict | None  Extra info (run_id, ecc.)
-
-        Returns
-        -------
-        Path del file checkpoint creato.
-        """
+        """Salva lo stato completo al passo `step`."""
         from src.agents.llm_client import TokenBudget
 
         # Serializza il NetworkManager
@@ -151,10 +110,6 @@ class CheckpointManager:
         # Pulisci vecchi checkpoint
         self._prune_old_checkpoints()
         return path
-
-    # ------------------------------------------------------------------
-    # Load
-    # ------------------------------------------------------------------
 
     def load(self, step: int) -> CheckpointData:
         """Carica il checkpoint a step `step`."""
@@ -198,7 +153,7 @@ class CheckpointManager:
                 result.append((step, p))
             except ValueError:
                 pass
-        # FIX: ordinamento per numero di step, non alfabetico
+        # Ordinamento numerico per step
         return sorted(result, key=lambda x: x[0])
 
     def has_checkpoint(self, step: int | None = None) -> bool:
@@ -207,17 +162,9 @@ class CheckpointManager:
             return (self._checkpoint_dir / self.FILENAME_PATTERN.format(step=step)).exists()
         return bool(list(self._checkpoint_dir.glob("ckpt_step_*.pkl")))
 
-    # ------------------------------------------------------------------
-    # Metrics accumulation
-    # ------------------------------------------------------------------
-
     def record_metrics(self, step: int, metrics: dict) -> None:
         """Accumula metriche per il resume (incluse nel prossimo checkpoint)."""
         self._cumulative_metrics.append({"step": step, **metrics})
-
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
 
     def _load_from_path(self, path: Path) -> CheckpointData:
         if not path.exists():

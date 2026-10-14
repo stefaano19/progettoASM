@@ -1,18 +1,10 @@
 """
-src/utils/seed.py
-=================
 Seed manager centralizzato per la riproducibilita' completa.
 
 Setta il seed su: random, numpy, torch (CPU + CUDA se disponibile).
 Il seed viene letto da config.yaml (execution.random_seed).
 
-Utilizzo
---------
-    from src.utils.seed import set_all_seeds
-    set_all_seeds(42)
-
-Note
-----
+Note:
 Su alcuni ambienti (es. Kaggle) numpy.random puo' essere rotto per
 binary incompatibility. Questo modulo aggira il problema importando
 il Generator direttamente dal modulo C, senza passare per la catena
@@ -30,14 +22,11 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
 # Risoluzione numpy.random binary incompatibility
-# ---------------------------------------------------------------------------
 # np.random.default_rng() passa per numpy/random/__init__.py che importa
 # _pickle.py -> mtrand.pyx, e quest'ultimo crasha se i dtype C sono
 # incompatibili.  Importando direttamente _generator e _pcg64 evitiamo
 # quella catena.
-# ---------------------------------------------------------------------------
 _NP_RANDOM_OK = True
 try:
     # Test: se funziona, usiamo la via normale
@@ -52,7 +41,7 @@ except Exception:
             "Uso import diretto di Generator/PCG64 come workaround."
         )
     except Exception:
-        # Anche l'import diretto fallisce — numpy e' completamente rotto
+        # Anche l'import diretto fallisce - numpy e' completamente rotto
         _Generator = None  # type: ignore[assignment,misc]
         _PCG64 = None  # type: ignore[assignment,misc]
         logger.error(
@@ -79,14 +68,7 @@ def safe_default_rng(seed: int | None = None) -> np.random.Generator:
 
 
 def set_all_seeds(seed: int = 42) -> None:
-    """
-    Imposta il seed su tutti i motori di randomness usati nel progetto.
-
-    Parameters
-    ----------
-    seed : int
-        Il valore del seed. Usa sempre lo stesso valore per riproducibilita'.
-    """
+    """Imposta il seed su tutti i motori di randomness usati nel progetto."""
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
 
@@ -101,7 +83,7 @@ def set_all_seeds(seed: int = 42) -> None:
             "I Generator creati con safe_default_rng() funzionano comunque."
         )
 
-    # PyTorch (opzionale — non installato in Fase 0)
+    # PyTorch (opzionale - non installato in Fase 0)
     try:
         import torch
         torch.manual_seed(seed)
@@ -113,7 +95,7 @@ def set_all_seeds(seed: int = 42) -> None:
             torch.backends.cudnn.benchmark = False
         logger.debug("[Seed] PyTorch seed impostato: %d", seed)
     except ImportError:
-        logger.debug("[Seed] PyTorch non disponibile — skip torch seed.")
+        logger.debug("[Seed] PyTorch non disponibile - skip torch seed.")
 
     logger.info("[Seed] Tutti i seed impostati a: %d", seed)
 

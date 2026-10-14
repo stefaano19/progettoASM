@@ -1,14 +1,11 @@
 """
-src/agents/agent.py
-===================
 Classe Agent: un nodo cognitivo nella rete sociale simulata.
 
-Ciclo di vita per step temporale t
--------------------------------------
-  1. perceive()  — legge il feed e i metadati del vicinato da NetworkManager
-  2. cognize()   — chiama l'LLM con system+user prompt, ottiene JSON
-  3. act()       — pubblica il post (se non silenzioso), calcola delta embedding
-  4. transition()— delega alla StateMachine per il nuovo stato
+Ciclo di vita per step temporale t:
+  1. perceive()  - legge il feed e i metadati del vicinato da NetworkManager
+  2. cognize()   - chiama l'LLM con system+user prompt, ottiene JSON
+  3. act()       - pubblica il post (se non silenzioso), calcola delta embedding
+  4. transition()- delega alla StateMachine per il nuovo stato
 
 Il metodo pubblico `step()` orchestra l'intero ciclo e restituisce
 un `AgentDecision` che l'Orchestratore usa per:
@@ -16,8 +13,7 @@ un `AgentDecision` che l'Orchestratore usa per:
   - loggare la decisione nel SimLogger
   - decidere il rewiring (Fase 2)
 
-Perturbazione dell'embedding
-------------------------------
+Perturbazione dell'embedding:
 L'agente non genera direttamente un vettore 128-dim (troppo costoso via LLM).
 Invece, la perturbazione e' calcolata internamente:
 
@@ -56,10 +52,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# AgentDecision
-# ---------------------------------------------------------------------------
 
 @dataclass
 class AgentDecision:
@@ -100,27 +92,8 @@ class AgentStepContext:
     context_hash: str | None = None
 
 
-# ---------------------------------------------------------------------------
-# Agent
-# ---------------------------------------------------------------------------
-
 class Agent:
-    """
-    Agente cognitivo su un nodo della rete sociale.
-
-    Parameters
-    ----------
-    node_id : int
-        ID del nodo (rinumerato 0..n-1 da extractor).
-    cfg : Config
-        Configurazione globale.
-    llm_client : LLMClient | MockLLMClient
-        Client LLM (reale o mock per testing).
-    state_machine : StateMachine
-        Istanza condivisa della macchina a stati (soglie per nodo).
-    initial_state : str
-        Stato iniziale ("S" per default, "I" per pazienti zero, "F" per seed CELF).
-    """
+    """Agente cognitivo su un nodo della rete sociale."""
 
     _EMBEDDING_SCALE = 0.05   # Ampiezza massima della perturbazione
 
@@ -146,17 +119,14 @@ class Agent:
         self._influence: str | None = None
         self._initialized = False
         self._seed = cfg.execution.random_seed
-        # Smart Cache (opzionale, cfg.simulation.smart_cache)
+        # Cache delle risposte (opzionale, cfg.simulation.smart_cache)
         self._smart_cache = bool(getattr(cfg.simulation, "smart_cache", False))
         self._last_context_hash: str | None = None
         self._last_response: "LLMResponse | None" = None
 
         # Direzione di perturbazione embedding.
-        # FIX: la direzione della "narrazione polarizzante" deve essere COMUNE a
-        # tutti gli agenti, altrimenti gli infetti vengono spinti in direzioni
-        # casuali e scorrelate e il rewiring (basato sulla similarita' degli
-        # embedding) non riflette le opinioni. Qui: direzione globale condivisa
-        # (seed globale) + piccola componente individuale per eterogeneita'.
+        # Direzione globale comune a tutti gli agenti (cosi' il rewiring basato
+        # sulla similarita' riflette le opinioni) + piccola componente individuale.
         dim = cfg.gnn.embedding_dim
         self._infection_direction: np.ndarray = self._build_direction(
             cfg.execution.random_seed, node_id, dim
@@ -195,10 +165,6 @@ class Agent:
         self._rebuild_system_prompt()
         logger.debug("[Agent %d] Inizializzato | state=%s | community=%d", self.node_id, self._state.value, community)
 
-    # ------------------------------------------------------------------
-    # Stato corrente
-    # ------------------------------------------------------------------
-
     @property
     def state(self) -> str:
         return self._state.value
@@ -218,13 +184,8 @@ class Agent:
 
     def _rebuild_system_prompt(self) -> None:
         """
-        FIX: prima il system prompt veniva costruito una sola volta con lo
-        stato iniziale; dopo un cambio di stato diceva ancora per esempio
-        "You are currently NEUTRAL" mentre il prompt utente diceva "Your
-        current state: I" (e i fact-checker venivano descritti come neutrali).
-        La nota correttiva arrivava solo alla chiamata successiva e poi
-        spariva. Ora il prompt dipende solo da (nodo, community, influenza,
-        stato corrente): identico anche dopo un resume da checkpoint.
+        Ricostruisce il system prompt dallo stato corrente. Dipende solo da
+        (nodo, community, influenza, stato), quindi e' identico dopo un resume.
         """
         if not self._initialized:
             return
@@ -246,10 +207,6 @@ class Agent:
             self._last_context_hash = None
             self._last_response = None
 
-    # ------------------------------------------------------------------
-    # Ciclo completo
-    # ------------------------------------------------------------------
-
     def step(
         self,
         current_step: int,
@@ -263,20 +220,8 @@ class Agent:
         Usalo per test, dry-run, MockLLMClient, o ovunque non serva
         parallelizzare. Per grafi grandi con backend reale, l'Orchestratore
         chiama prepare_step()/finalize_step() separatamente per dispacciare
-        le chiamate LLM di piu' agenti su un thread pool — vedi
+        le chiamate LLM di piu' agenti su un thread pool - vedi
         SimulationOrchestrator._agent_cycle.
-
-        Parameters
-        ----------
-        current_step : int
-            Step temporale corrente (t).
-        network_manager : NetworkManager
-            Grafo dinamico — fonte di verità per feed, stati, embedding.
-
-        Returns
-        -------
-        AgentDecision
-            Decisione completa da usare per logging e aggiornamento del grafo.
         """
         ctx = self.prepare_step(current_step, network_manager)
         if ctx is None:
@@ -292,7 +237,7 @@ class Agent:
         try:
             response = self._llm.chat(ctx.messages)
         except RuntimeError:
-            raise  # Token budget esaurito — propaga all'Orchestratore
+            raise  # Token budget esaurito - propaga all'Orchestratore
         except Exception as exc:
             logger.error("[Agent %d] LLM error: %s", self.node_id, exc)
             response = None
@@ -306,24 +251,13 @@ class Agent:
         all_states: dict[int, str] | None = None,
     ) -> AgentStepContext | None:
         """
-        Percezione + costruzione messaggi — NESSUNA chiamata LLM qui dentro.
+        Percezione + costruzione messaggi - NESSUNA chiamata LLM qui dentro.
 
         Tutte le letture da NetworkManager avvengono qui. Pensato per essere
         chiamato in un loop sequenziale dal thread principale dell'Orchestratore,
         PRIMA di dispacciare le chiamate LLM (lente, I/O di rete) su un thread
         pool: in questo modo NetworkManager non viene mai toccato da thread
         diversi da quello principale.
-
-        Parameters
-        ----------
-        all_states : dict[int, str] | None
-            Snapshot pre-calcolato di network_manager.get_all_states().
-            Se l'Orchestratore chiama prepare_step() per centinaia di
-            migliaia di nodi nello stesso step, ricalcolare get_all_states()
-            ad ogni chiamata rischia di essere O(n) per chiamata e quindi
-            O(n^2) sull'intero step. Passandolo gia' calcolato una volta
-            sola si evita il problema. Se None (uso standalone via step()),
-            viene recuperato qui come prima.
         """
         old_state = self._state.value
 
@@ -342,12 +276,10 @@ class Agent:
             self.node_id, all_states, neighbours
         )
 
-        # --- SMART CACHE (opzionale, disattivata di default) ---
+        # SMART CACHE (opzionale, disattivata di default)
         # Riusa l'ultima risposta LLM se stato, feed e vicinato non sono
-        # cambiati. ATTENZIONE: l'impronta ignora lo step, quindi un agente con
-        # contesto stabile ripete la stessa decisione per sempre ("congelato")
-        # e ripubblica lo stesso post. Per questo e' disattivata
-        # (cfg.simulation.smart_cache = false).
+        # cambiati. L'impronta ignora lo step, quindi un agente con contesto
+        # stabile resta congelato: per questo di default e' disattivata.
         context_hash: str | None = None
         if self._smart_cache:
             import hashlib
@@ -369,13 +301,8 @@ class Agent:
                 context_hash=context_hash
             )
 
-        # --- FAST PATH OPTIMIZATION ---
-        # Se il nodo è "S" e non ha vicini attivi ("I" o "F"), la sua fraction_I e fraction_F
-        # sono 0. Nel modello Linear Threshold (StateMachine), fraction_I == 0 non potrà MAI 
-        # superare la soglia minima (0.05). Quindi il nodo non può cambiare stato.
-        # Inoltre un nodo neutro isolato pubblicherebbe solo opinioni neutre ridondanti.
-        # Saltando la costruzione del prompt e il dispatch LLM, risparmiamo un'enorme 
-        # quantità di computazione nei primi step per l'intera rete.
+        # Un nodo S senza vicini I o F non puo' cambiare stato: si salta la
+        # chiamata LLM.
         if old_state == "S" and nb_state_counts.get("I", 0) == 0 and nb_state_counts.get("F", 0) == 0:
             return None
 
@@ -409,19 +336,11 @@ class Agent:
         skip_embedding_update: bool = False,
     ) -> AgentDecision:
         """
-        Parsing, transizione di stato, scrittura su NetworkManager — a
+        Parsing, transizione di stato, scrittura su NetworkManager - a
         partire da una risposta LLM gia' ottenuta (es. da un thread pool).
 
-        IMPORTANTE: va sempre chiamato dal thread principale, nello stesso
-        ordine usato per prepare_step(), per evitare scritture concorrenti
-        su NetworkManager (add_post, perturb_embedding, set_state non sono
-        garantite thread-safe e qui assumiamo non lo siano).
-
-        Parameters
-        ----------
-        skip_embedding_update : bool
-            Se True, salta la chiamata a perturb_embedding (l'orchestratore
-            la gestisce in batch con perturb_embeddings_batch). Default False.
+        Va chiamato dal thread principale, nello stesso ordine di
+        prepare_step(): NetworkManager non e' thread-safe.
         """
         old_state = ctx.old_state
         current_step = ctx.current_step
@@ -437,8 +356,8 @@ class Agent:
             is_fallback = response.is_fallback or parse_fallback
             tokens_in = response.input_tokens
             tokens_out = response.output_tokens
-            
-            # Salva per la Smart Cache (solo se attiva)
+
+            # Salva per la cache (solo se attiva)
             if not is_fallback and ctx.context_hash is not None:
                 self._last_response = response
                 self._last_context_hash = ctx.context_hash
@@ -465,9 +384,8 @@ class Agent:
         new_state_enum = transition.new_state
         state_changed = transition.changed
 
-        # 5. Azione — pubblica post e aggiorna NetworkManager
-        # FIX: il post porta lo stato DOPO la transizione. Prima un agente
-        # che passava da S a I pubblicava il post pro-narrativa con [S].
+        # 5. Azione - pubblica post e aggiorna NetworkManager
+        # Il post porta lo stato dopo la transizione
         if opinion:
             network_manager.add_post(self.node_id, {
                 "node_id": self.node_id,
@@ -512,10 +430,6 @@ class Agent:
             is_fallback=is_fallback,
         )
 
-    # ------------------------------------------------------------------
-    # Embedding perturbation
-    # ------------------------------------------------------------------
-
     def _compute_embedding_delta(self, susceptibility: float, new_state: str) -> np.ndarray:
         """
         Calcola il vettore di perturbazione dell'embedding.
@@ -537,10 +451,6 @@ class Agent:
             sign = 0.0    # Suscettibile neutro: nessuna perturbazione netta
 
         return (self._infection_direction * magnitude * sign).astype(np.float32)
-
-    # ------------------------------------------------------------------
-    # Repr
-    # ------------------------------------------------------------------
 
     def __repr__(self) -> str:
         return f"Agent(id={self.node_id}, state={self._state.value})"

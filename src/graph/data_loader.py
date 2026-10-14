@@ -1,6 +1,4 @@
 """
-src/graph/data_loader.py
-========================
 Download e caricamento di ogbl-collab tramite Open Graph Benchmark (OGB).
 
 Converte il dataset dal formato OGB (edge_index tensore) a un grafo
@@ -11,11 +9,6 @@ ogbl-collab facts:
   - ~1,285,465 archi (co-autorships)
   - Node features: 128-dim media word2vec dei titoli dei paper
   - Edge features: anno di collaborazione (1963-2020)
-
-Utilizzo
---------
-    from src.graph.data_loader import load_collab_graph
-    G = load_collab_graph(cfg)
 """
 
 from __future__ import annotations
@@ -35,32 +28,18 @@ logger = logging.getLogger(__name__)
 
 
 def load_collab_graph(cfg: "Config") -> tuple[nx.Graph, np.ndarray]:
-    """
-    Scarica (se necessario) e carica ogbl-collab come grafo NetworkX.
-
-    Parameters
-    ----------
-    cfg : Config
-        Config oggetto dal loader YAML.
-
-    Returns
-    -------
-    G : nx.Graph
-        Grafo non diretto con attributi nodo (feature, degree).
-    node_features : np.ndarray
-        Matrice (n_nodes, 128) delle feature OGB.
-    """
+    """Scarica (se necessario) e carica ogbl-collab come grafo NetworkX."""
     ogb_root = cfg.project_root / cfg.paths.data_raw
     cache_path = cfg.project_root / cfg.paths.data_processed / "full_graph.gpickle"
 
-    # --- Cache hit ---
+    # Cache hit
     if cache_path.exists():
         logger.info("[DataLoader] Caricamento grafo da cache: %s", cache_path)
         with open(cache_path, "rb") as f:
             data = pickle.load(f)
         return data["graph"], data["features"]
 
-    # --- Caricamento OGB ---
+    # Caricamento OGB
     logger.info("[DataLoader] Download/caricamento ogbl-collab da OGB...")
     try:
         from ogb.linkproppred import LinkPropPredDataset
@@ -84,7 +63,7 @@ def load_collab_graph(cfg: "Config") -> tuple[nx.Graph, np.ndarray]:
         n_nodes, n_edges,
     )
 
-    # --- Costruzione grafo NetworkX ---
+    # Costruzione grafo NetworkX
     G = nx.Graph()
     G.add_nodes_from(range(n_nodes))
 
@@ -112,7 +91,7 @@ def load_collab_graph(cfg: "Config") -> tuple[nx.Graph, np.ndarray]:
         G.number_of_nodes(), G.number_of_edges(),
     )
 
-    # --- Salva cache ---
+    # Salva cache
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     with open(cache_path, "wb") as f:
         pickle.dump({"graph": G, "features": node_feat}, f, protocol=pickle.HIGHEST_PROTOCOL)

@@ -1,10 +1,7 @@
 """
-src/influence/metrics.py
-========================
 Metriche di valutazione dell'intervento Fact-Checker (Fase 3).
 
-Metriche calcolate
-------------------
+Metriche calcolate:
   FCS (Fact-Checker Spread):
     Frazione di nodi non-F entro `reach_hops` salti da almeno un F.
 
@@ -21,12 +18,6 @@ Metriche calcolate
   delta_infection_rate, delta_echo_chamber_index, ...:
     Differenza (corrente - baseline) per ogni metrica topologica.
     Valori negativi indicano riduzione del fenomeno (successo dell'intervento).
-
-Utilizzo
---------
-    from src.influence.metrics import compute_full_influence_report
-    report = compute_full_influence_report(G, agent_states, community_map,
-                                           baseline_metrics, cfg)
 """
 
 from __future__ import annotations
@@ -43,9 +34,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
 # Fact-Checker Spread
-# ---------------------------------------------------------------------------
 
 def compute_fact_checker_spread(
     G: nx.Graph,
@@ -57,9 +46,8 @@ def compute_fact_checker_spread(
     """
     Copertura dei nodi Fact-Checker (stato 'F').
 
-    FIX: prima si contavano i nodi raggiungibili SENZA limite di distanza:
-    su una rete connessa il valore era sempre 1.0 (5000/5000) e non misurava
-    nulla. Ora:
+    Senza limite di distanza, su una rete connessa la copertura sarebbe
+    sempre 1.0, quindi si considerano:
 
       - fcs / avg_reach_per_fc / total_reachable: nodi entro `max_hops` salti
         da almeno un F (default 1 = vicinato diretto, l'unico che la
@@ -126,9 +114,7 @@ def compute_fact_checker_spread(
     }
 
 
-# ---------------------------------------------------------------------------
 # Delta metrics (confronto baseline vs post-intervento)
-# ---------------------------------------------------------------------------
 
 def compute_intervention_delta(
     baseline_metrics: dict[str, Any],
@@ -141,17 +127,6 @@ def compute_intervention_delta(
 
     Valori negativi per metriche come infection_rate, echo_chamber_index
     indicano miglioramento (riduzione del fenomeno).
-
-    Parameters
-    ----------
-    baseline_metrics : dict
-        Metriche misurate prima dell'intervento (post-Fase 1/2).
-    current_metrics : dict
-        Metriche misurate dopo l'intervento CELF (post-Fase 3).
-
-    Returns
-    -------
-    dict con chiavi "delta_<metric_name>" per ogni metrica numerica comune.
     """
     delta: dict[str, float] = {}
 
@@ -169,10 +144,6 @@ def compute_intervention_delta(
     return delta
 
 
-# ---------------------------------------------------------------------------
-# Report completo
-# ---------------------------------------------------------------------------
-
 def compute_full_influence_report(
     G: nx.Graph,
     agent_states: dict[int, str],
@@ -187,30 +158,13 @@ def compute_full_influence_report(
       - Metriche di spread dei fact-checker (FCS, avg_reach)
       - Metriche topologiche post-intervento (ECI, Q, infection_rate)
       - Delta rispetto alla baseline pre-intervento
-
-    Parameters
-    ----------
-    G : nx.Graph
-        Grafo post-intervento.
-    agent_states : dict[int, str]
-        Stati finali degli agenti.
-    community_map : dict[int, int]
-        Mappa community Louvain.
-    baseline_metrics : dict
-        Snapshot metriche pre-intervento.
-    cfg : Config
-        Configurazione globale.
-
-    Returns
-    -------
-    dict con tutte le metriche per il report finale.
     """
     from src.graph.metrics import compute_all_metrics
     from src.agents.state_machine import StateMachine
 
     # Metriche topologiche post-intervento
-    # FIX: stessa codifica usata per la baseline (NetworkManager.get_belief_map),
-    # altrimenti il delta "prima/dopo" confronta due scale diverse.
+    # Stessa codifica della baseline (NetworkManager.get_belief_map), cosi'
+    # il delta prima/dopo e' calcolato sulla stessa scala.
     from src.graph.network_manager import belief_map_from_states
     belief_map = belief_map_from_states(agent_states)
     current_metrics = compute_all_metrics(G, cfg, community_map, belief_map)

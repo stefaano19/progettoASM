@@ -1,6 +1,4 @@
 """
-src/graph/metrics.py
-====================
 Metriche topologiche del grafo per la Fase 0 baseline e il monitoring
 continuo durante la simulazione.
 
@@ -12,14 +10,8 @@ Metriche calcolate:
   - Echo Chamber Index (ECI)
   - Belief Polarisation Index (BP)
 
-Design note: le metriche costose sono automaticamente adattate alla scala
-del grafo. Per grafi > 10k nodi si usano approssimazioni campionate.
-
-Utilizzo
---------
-    from src.graph.metrics import compute_all_metrics, compute_centralities
-    metrics = compute_all_metrics(G, cfg, community_map, belief_states)
-    centralities = compute_centralities(G, cfg)
+Per grafi con piu' di 10k nodi le metriche costose sono approssimate
+tramite campionamento.
 """
 
 from __future__ import annotations
@@ -43,7 +35,7 @@ try:
     import cugraph
     import cudf
     _CUGRAPH_AVAILABLE = True
-    logger.debug("[Metrics] cuGraph disponibile — accelerazione GPU abilitata.")
+    logger.debug("[Metrics] cuGraph disponibile - accelerazione GPU abilitata.")
 except ImportError:
     _CUGRAPH_AVAILABLE = False
 
@@ -69,21 +61,11 @@ def _parallel_betweenness_chunk(args: tuple[nx.Graph, list[int]]) -> dict[int, f
     )
 
 
-# ---------------------------------------------------------------------------
-# Centrality
-# ---------------------------------------------------------------------------
-
 def compute_centralities(
     G: nx.Graph,
     cfg: "Config",
 ) -> dict[int, dict[str, float]]:
-    """
-    Calcola le centralita' per ogni nodo del grafo.
-
-    Returns
-    -------
-    dict[node_id, dict[metric_name, value]]
-    """
+    """Calcola le centralita' per ogni nodo del grafo."""
     seed = cfg.execution.random_seed
     alpha_pr = cfg.metrics.pagerank_alpha
     alpha_katz = cfg.metrics.katz_alpha
@@ -92,14 +74,14 @@ def compute_centralities(
 
     result: dict[int, dict[str, float]] = {n_id: {} for n_id in G.nodes()}
 
-    # --- Degree centrality (O(n)) ---
+    # Degree centrality (O(n))
     logger.info("[Metrics] Degree centrality (%d nodi)...", n)
     deg = nx.degree_centrality(G)
     for n_id, v in deg.items():
         result[n_id]["degree_centrality"] = v
         result[n_id]["degree"] = G.degree(n_id)
 
-    # --- PageRank ---
+    # PageRank
     logger.info("[Metrics] PageRank...")
     try:
         if _CUGRAPH_AVAILABLE:
@@ -117,7 +99,7 @@ def compute_centralities(
     except Exception as e:
         logger.warning("[Metrics] PageRank fallito: %s", e)
 
-    # --- Katz centrality (scipy sparse diretto) ---
+    # Katz centrality (scipy sparse diretto)
     logger.info("[Metrics] Katz centrality (scipy sparse)...")
     try:
         katz = _katz_centrality_sparse(G, alpha=alpha_katz)
@@ -127,12 +109,12 @@ def compute_centralities(
     except Exception as e:
         logger.warning("[Metrics] Katz fallita: %s", e)
 
-    # --- Betweenness (campionato, efficiente in parallelo o su GPU) ---
+    # Betweenness (campionato, efficiente in parallelo o su GPU)
     if cfg.metrics.compute_betweenness:
         logger.info("[Metrics] Betweenness (sample=%d)...", bet_sample)
         try:
             sample_size = min(bet_sample, n)
-            
+
             if _CUGRAPH_AVAILABLE:
                 import cugraph
                 import cudf
@@ -146,14 +128,14 @@ def compute_centralities(
             else:
                 import multiprocessing as mp
                 from concurrent.futures import ProcessPoolExecutor
-                
+
                 rng = random.Random(seed)
                 sampled = rng.sample(list(G.nodes()), sample_size)
-                
+
                 n_cores = max(1, mp.cpu_count() - 1)
                 chunk_size = max(1, len(sampled) // n_cores)
                 chunks = [sampled[i:i + chunk_size] for i in range(0, len(sampled), chunk_size)]
-                
+
                 bc_raw = {n_id: 0.0 for n_id in G.nodes()}
                 ctx = mp.get_context("spawn")  # Evita CUDA initialization crash in Kaggle
                 with ProcessPoolExecutor(max_workers=n_cores, mp_context=ctx) as executor:
@@ -164,20 +146,20 @@ def compute_centralities(
                         res = f.result()
                         for node, v in res.items():
                             bc_raw[node] += v
-                
+
                 # Normalizzazione
                 scale = 1.0
                 if n > 2:
                     scale = 1.0 / ((n - 1) * (n - 2))
                 scale *= float(n) / sample_size
-                
+
                 is_directed = G.is_directed() if hasattr(G, 'is_directed') else False
                 if not is_directed:
                     scale *= 2.0  # In nx.betweenness_centrality undirected scale is 2 / ((n-1)(n-2))
-                
+
                 for n_id, v in bc_raw.items():
                     result[n_id]["betweenness"] = v * scale
-                
+
         except Exception as e:
             logger.warning("[Metrics] Betweenness fallita: %s", e)
     else:
@@ -197,17 +179,9 @@ def _katz_centrality_sparse(
     """
     Katz centrality via power iteration su matrice sparsa.
 
-    NOTA STORICA: la versione precedente risolveva (I - alpha*A)^{-1} * 1
-    con spsolve() (fattorizzazione LU diretta). Su grafi con distribuzione
-    di grado "scale-free"/hub-based (tipico di reti sociali ed
-    epidemiologiche) la fattorizzazione LU sparsa soffre di fill-in
-    catastrofico: il fattore L diventa denso anche se A e' sparsissima, e
-    il tempo/memoria richiesti esplodono SENZA che scipy lanci un'eccezione
-    o vada in timeout — il processo resta semplicemente bloccato.
-
-    Questa versione usa solo prodotti matrice-vettore sparsi (A @ x),
-    O(E) per iterazione: nessuna fattorizzazione, nessun fill-in. Scala
-    bene anche su grafi da centinaia di migliaia di nodi.
+    Si usano solo prodotti matrice-vettore (O(E) per iterazione) invece di
+    risolvere (I - alpha*A)^{-1} * 1 con spsolve: su grafi scale-free la
+    fattorizzazione LU soffre di fill-in e diventa ingestibile.
     """
     try:
         import scipy.sparse.linalg as spla
@@ -266,9 +240,7 @@ def _katz_centrality_sparse(
     return {nodes[i]: float(x[i]) for i in range(n)}
 
 
-# ---------------------------------------------------------------------------
 # Topological metrics (snapshot)
-# ---------------------------------------------------------------------------
 
 def compute_topological_metrics(G: nx.Graph, cfg: "Config") -> dict[str, Any]:
     """
@@ -287,11 +259,11 @@ def compute_topological_metrics(G: nx.Graph, cfg: "Config") -> dict[str, Any]:
         "avg_degree": (2 * m / n) if n > 0 else 0.0,
     }
 
-    # Connected components — veloce O(n+m), ma lo facciamo solo una volta
+    # Connected components - veloce O(n+m), ma lo facciamo solo una volta
     logger.info("[Metrics] Connected components...")
     metrics["num_connected_components"] = nx.number_connected_components(G)
 
-    # Clustering coefficient — campionato per grafi grandi
+    # Clustering coefficient - campionato per grafi grandi
     if is_large:
         sample_size = min(5000, n)
         logger.info("[Metrics] Clustering coefficient (campionato, %d nodi)...", sample_size)
@@ -337,11 +309,11 @@ def _approx_diameter(G: nx.Graph, seed: int, samples: int = 30) -> int:
     rng = random.Random(seed)
     lcc = G.subgraph(max(nx.connected_components(G), key=len))
     sampled = rng.sample(list(lcc.nodes()), min(samples, lcc.number_of_nodes()))
-    
+
     n_cores = max(1, mp.cpu_count() - 1)
     chunk_size = max(1, len(sampled) // n_cores) if sampled else 1
     chunks = [sampled[i:i + chunk_size] for i in range(0, len(sampled), chunk_size)]
-    
+
     max_ecc = 0
     ctx = mp.get_context("spawn")
     with ProcessPoolExecutor(max_workers=n_cores, mp_context=ctx) as executor:
@@ -350,13 +322,9 @@ def _approx_diameter(G: nx.Graph, seed: int, samples: int = 30) -> int:
             futures.append(executor.submit(_parallel_diameter_chunk, (lcc, chunk)))
         for f in futures:
             max_ecc = max(max_ecc, f.result())
-            
+
     return max_ecc
 
-
-# ---------------------------------------------------------------------------
-# Echo Chamber metrics
-# ---------------------------------------------------------------------------
 
 def compute_modularity(
     G: nx.Graph,
@@ -491,9 +459,7 @@ def compute_belief_polarisation(
     Varianza dei valori di belief normalizzata a [0, 1].
 
     La varianza massima per valori in [lo, hi] e' ((hi - lo) / 2)^2, raggiunta
-    con meta' dei nodi a lo e meta' a hi (per 0/1 vale 0.25). Prima si
-    divideva sempre per 0.25 anche se la codifica degli stati va da -0.5 a 1,
-    saturando l'indice a 1.
+    con meta' dei nodi a lo e meta' a hi (per 0/1 vale 0.25).
     """
     if not belief_states:
         return 0.0
@@ -506,9 +472,7 @@ def compute_belief_polarisation(
     return float(min(np.var(values) / max_var, 1.0))
 
 
-# ---------------------------------------------------------------------------
 # All-in-one snapshot
-# ---------------------------------------------------------------------------
 
 # Cache globale per metriche topologiche e community
 _CACHE: dict = {
@@ -541,10 +505,8 @@ def compute_all_metrics(
       - metriche topologiche: ricalcolate solo se l'INSIEME degli archi cambia
       - ECI/modularity: ricalcolate se cambiano gli archi o la community_map
 
-    FIX: prima la cache era indicizzata sul solo numero di archi. Con il
-    rewiring a densita' costante (swap) il numero non cambia mai, quindi un
-    grafo diverso con lo stesso numero di archi riceveva le metriche di un
-    altro grafo (es. il "prima" della Fase 3 riceveva i valori della Fase 0).
+    La cache e' indicizzata su un'impronta degli archi e non sul loro numero:
+    con il rewiring a densita' costante il numero di archi non cambia.
     """
     global _CACHE
     m = _edge_fingerprint(G)

@@ -1,21 +1,16 @@
 """
-src/agents/state_machine.py
-============================
 Macchina a stati per gli agenti della simulazione.
 
-Stati possibili
----------------
-  S — Susceptible  : esposto ma non ancora convinto dalla narrazione
-  I — Infected     : crede e diffonde attivamente la narrazione polarizzante
-  R — Resistant    : esposto, critico, non si lascia convincere; vettore fact-check
-  F — Fact-Checker : seed iniettato da CELF; non transita verso I
+Stati possibili:
+  S - Susceptible  : esposto ma non ancora convinto dalla narrazione
+  I - Infected     : crede e diffonde attivamente la narrazione polarizzante
+  R - Resistant    : esposto, critico, non si lascia convincere; vettore fact-check
+  F - Fact-Checker : seed iniettato da CELF; non transita verso I
 
-Modello di transizione: Linear Threshold (LT) esteso
-------------------------------------------------------
+Modello di transizione: Linear Threshold (LT) esteso:
 Il classico LT usa una soglia fissa theta_u. Qui la soglia e' modulata
-dall'output dell'agente LLM:
-
-dove `susceptibility` (in [0, 1]) e' il campo dell'output LLM:
+dall'output dell'agente LLM, dove `susceptibility` (in [0, 1]) e' il campo
+restituito dal modello:
 
     effective_threshold(u) = base_threshold(u) * (1.5 - susceptibility)
 
@@ -28,7 +23,7 @@ Regole di transizione:
   S -> R  : se spread_intent == False
             AND frazione_vicini_I >= min_resistance_exposure (esposizione non banale)
             AND susceptibility < resistance_susceptibility_cutoff (genuinamente poco suscettibile)
-            Altrimenti resta S — "in bilico": esposto ma non ancora schierato,
+            Altrimenti resta S - "in bilico": esposto ma non ancora schierato,
             potra' ancora convertirsi in I piu' avanti se la pressione cresce.
   I -> R  : se frazione_vicini_F > resistance_threshold  OR proposed_state == "R"
   I -> I  : altrimenti (rimane infetto)
@@ -36,17 +31,6 @@ Regole di transizione:
             AND proposed_state == "I"  (ricaduta)
   R -> R  : altrimenti (rimane resistente)
   F -> F  : lo stato F e' assorbente (iniettato da CELF, non torna indietro)
-
-Utilizzo
---------
-    from src.agents.state_machine import StateMachine, AgentState
-    sm = StateMachine(cfg)
-    new_state = sm.transition(
-        current_state="S",
-        node_id=5,
-        neighbours_states={"I": 3, "S": 2, "R": 1, "F": 0},
-        llm_output={"susceptibility": 0.8, "proposed_state": "I", "spread_intent": True},
-    )
 """
 
 from __future__ import annotations
@@ -63,10 +47,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# AgentState enum
-# ---------------------------------------------------------------------------
-
 class AgentState(str, Enum):
     S = "S"   # Susceptible
     I = "I"   # Infected
@@ -82,10 +62,6 @@ class AgentState(str, Enum):
             return cls.S
 
 
-# ---------------------------------------------------------------------------
-# Transition result
-# ---------------------------------------------------------------------------
-
 @dataclass
 class TransitionResult:
     old_state: AgentState
@@ -99,27 +75,8 @@ class TransitionResult:
         return self.old_state != self.new_state
 
 
-# ---------------------------------------------------------------------------
-# StateMachine
-# ---------------------------------------------------------------------------
-
 class StateMachine:
-    """
-    Linear Threshold esteso con modulazione LLM.
-
-    Parameters
-    ----------
-    seed : int
-        Seed per assegnazione stocastica delle soglie base per nodo.
-    base_threshold_mean : float
-        Media della soglia base (default 0.3).
-    base_threshold_std : float
-        Deviazione standard della soglia base (default 0.1).
-    resistance_threshold : float
-        Frazione minima di vicini F per far transitare I -> R.
-    relapse_threshold : float
-        Soglia di ricaduta R -> I (alta per renderla rara).
-    """
+    """Linear Threshold esteso con modulazione LLM."""
 
     def __init__(
         self,
@@ -147,8 +104,7 @@ class StateMachine:
 
     @classmethod
     def from_config(cls, cfg: "Config") -> "StateMachine":
-        # getattr con default: non rompe se questi campi non esistono ancora
-        # nella tua dataclass Config — puoi aggiungerli quando vuoi.
+        # getattr con default per i campi opzionali della config
         sim_cfg = getattr(cfg, "simulation", None)
         inf_cfg = getattr(cfg, "influence", None)
         return cls(
@@ -165,19 +121,13 @@ class StateMachine:
             ),
         )
 
-    # ------------------------------------------------------------------
-    # Threshold management
-    # ------------------------------------------------------------------
-
     def get_threshold(self, node_id: int) -> float:
         """
         Soglia base per il nodo, fissa per tutta la simulazione.
         Campionata da N(mean, std) e clippata in [0.05, 0.95].
 
-        FIX: prima le soglie venivano estratte da un unico generatore
-        nell'ordine in cui i nodi venivano interrogati e non erano salvate nel
-        checkpoint: a ogni resume ogni nodo riceveva una soglia diversa. Ora la
-        soglia dipende solo da (seed, node_id): identica in ogni sessione.
+        La soglia dipende solo da (seed, node_id), quindi resta la stessa
+        anche dopo un resume.
         """
         if node_id not in self._node_thresholds:
             node_rng = random.Random(self._seed * 1_000_003 + node_id)
@@ -204,10 +154,6 @@ class StateMachine:
         modifier = 1.5 - susceptibility  # 1.5 quando susc=0, 0.5 quando susc=1
         return max(0.05, min(0.99, base * modifier))
 
-    # ------------------------------------------------------------------
-    # Core transition
-    # ------------------------------------------------------------------
-
     def transition(
         self,
         current_state: str | AgentState,
@@ -215,25 +161,7 @@ class StateMachine:
         neighbour_states: dict[str, int],
         llm_output: dict,
     ) -> TransitionResult:
-        """
-        Calcola la transizione di stato per un nodo.
-
-        Parameters
-        ----------
-        current_state : str | AgentState
-            Stato corrente del nodo ("S", "I", "R", "F").
-        node_id : int
-            ID del nodo (per la soglia personalizzata).
-        neighbour_states : dict[str, int]
-            Conteggio degli stati dei vicini: {"S": n, "I": m, "R": k, "F": j}.
-        llm_output : dict
-            Output JSON dell'agente LLM:
-            {susceptibility, proposed_state, spread_intent, ...}
-
-        Returns
-        -------
-        TransitionResult
-        """
+        """Calcola la transizione di stato per un nodo."""
         # Estrai il valore stringa puro: se è già un'istanza AgentState usa .value,
         # altrimenti converti a stringa (evita 'AgentState.S' da str(enum)).
         raw_state = current_state.value if isinstance(current_state, AgentState) else str(current_state)
@@ -255,7 +183,7 @@ class StateMachine:
 
         theta = self.effective_threshold(node_id, susceptibility)
 
-        # --- Regole di transizione ---
+        # Regole di transizione
         new_state = state
         reason = "no_change"
 
@@ -265,10 +193,7 @@ class StateMachine:
             reason = "fact_checker_permanent"
 
         elif state == AgentState.S:
-            # FIX: i fact-checker ora agiscono anche sui nodi S (inoculazione).
-            # Prima F influenzava solo gli I con >= 25% di vicini F, condizione
-            # quasi irraggiungibile con budget piccoli: l'intervento CELF non
-            # poteva avere effetto per costruzione.
+            # Inoculazione: i fact-checker agiscono anche sui nodi S
             if (
                 n_factcheck > 0
                 and fraction_F >= self._fc_protection_threshold
@@ -291,7 +216,7 @@ class StateMachine:
                     f"{self._min_resistance_exposure:.2f}, susc={susceptibility:.2f} < "
                     f"{self._resistance_susceptibility_cutoff:.2f})"
                 )
-            # else: rimane S (esposto ma in bilico — non abbastanza esposizione,
+            # else: rimane S (esposto ma in bilico - non abbastanza esposizione,
             # o susceptibility troppo alta per "chiudersi" gia' ora)
 
         elif state == AgentState.I:
@@ -306,8 +231,7 @@ class StateMachine:
 
         elif state == AgentState.R:
             # Ricaduta: vicinato molto infetto, alta suscettibilita' E l'LLM
-            # propone I. FIX: prima bastavano le prime due condizioni, anche se
-            # l'agente dichiarava di restare R.
+            # propone I.
             if (
                 fraction_I >= self._relapse_threshold
                 and susceptibility > self._relapse_min_susceptibility
@@ -331,9 +255,7 @@ class StateMachine:
             effective_threshold=theta,
         )
 
-    # ------------------------------------------------------------------
     # Batch transition (per tutto il grafo)
-    # ------------------------------------------------------------------
 
     def batch_transition(
         self,
@@ -341,22 +263,7 @@ class StateMachine:
         neighbour_states_map: dict[int, dict[str, int]],
         llm_outputs: dict[int, dict],
     ) -> dict[int, TransitionResult]:
-        """
-        Applica la transizione a tutti i nodi del grafo in un passo.
-
-        Parameters
-        ----------
-        states : dict[int, str]
-            Stato corrente per ogni nodo.
-        neighbour_states_map : dict[int, dict[str, int]]
-            Per ogni nodo, il conteggio degli stati dei suoi vicini.
-        llm_outputs : dict[int, dict]
-            Output LLM per ogni nodo.
-
-        Returns
-        -------
-        dict[int, TransitionResult]
-        """
+        """Applica la transizione a tutti i nodi del grafo in un passo."""
         results: dict[int, TransitionResult] = {}
         for node_id, current_state in states.items():
             nb_states = neighbour_states_map.get(node_id, {})
@@ -368,10 +275,6 @@ class StateMachine:
                 llm_output=llm_out,
             )
         return results
-
-    # ------------------------------------------------------------------
-    # Utility
-    # ------------------------------------------------------------------
 
     @staticmethod
     def count_states(states: dict[int, str]) -> dict[str, int]:

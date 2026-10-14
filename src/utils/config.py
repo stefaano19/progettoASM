@@ -1,13 +1,5 @@
 """
-src/utils/config.py
-===================
 YAML loader che produce un Config dataclass tipizzato.
-
-Utilizzo
---------
-    from src.utils.config import load_config
-    cfg = load_config()          # cerca config.yaml nella project root
-    cfg = load_config("my_config.yaml")
 
 Il loader risolve tutti i path relativi rispetto alla project root
 (la directory che contiene config.yaml), quindi il codice funziona
@@ -25,10 +17,6 @@ from typing import Any
 import yaml
 
 
-# ---------------------------------------------------------------------------
-# Project root detection
-# ---------------------------------------------------------------------------
-
 def _find_project_root(start: Path | None = None) -> Path:
     """
     Risale l'albero delle directory finche' non trova config.yaml.
@@ -44,9 +32,7 @@ def _find_project_root(start: Path | None = None) -> Path:
 PROJECT_ROOT: Path = _find_project_root()
 
 
-# ---------------------------------------------------------------------------
 # Sub-configs (dataclasses annidati)
-# ---------------------------------------------------------------------------
 
 @dataclass
 class ExecutionConfig:
@@ -109,7 +95,7 @@ class SimulationConfig:
     rewiring_cooldown: int = 3
     checkpoint_every: int = 5
     seeder_strategy: str = "combined"
-    # Parametri StateMachine (prima letti con getattr ma mai caricabili da YAML)
+    # Parametri StateMachine
     min_resistance_exposure: float = 0.12
     resistance_susceptibility_cutoff: float = 0.5
     max_llm_failure_rate: float = 0.5   # oltre questa quota di chiamate fallite (o fallback) lo step si ferma
@@ -186,10 +172,6 @@ class InfluenceConfig:
     reach_hops: int = 1                     # raggio della metrica di reach F
 
 
-# ---------------------------------------------------------------------------
-# Root config
-# ---------------------------------------------------------------------------
-
 @dataclass
 class Config:
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
@@ -238,10 +220,6 @@ class Config:
             (self.project_root / attr).mkdir(parents=True, exist_ok=True)
 
 
-# ---------------------------------------------------------------------------
-# Loader
-# ---------------------------------------------------------------------------
-
 def _nested_to_dataclass(raw: dict, dc_class: type) -> Any:
     """
     Converte ricorsivamente un dict annidato nel dataclass corrispondente.
@@ -275,14 +253,7 @@ def _nested_to_dataclass(raw: dict, dc_class: type) -> Any:
 
 
 def load_config(config_path: str | Path | None = None) -> Config:
-    """
-    Carica config.yaml e restituisce un oggetto Config tipizzato.
-
-    Parameters
-    ----------
-    config_path : str | Path | None
-        Percorso al file YAML. Se None, cerca config.yaml nella project root.
-    """
+    """Carica config.yaml e restituisce un oggetto Config tipizzato."""
     if config_path is None:
         config_path = PROJECT_ROOT / "config.yaml"
     config_path = Path(config_path)
